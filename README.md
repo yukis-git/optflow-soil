@@ -23,7 +23,13 @@ Metal GPU 版(`optflow-gpu`)、デスクトップアプリ(`optflow-app`、efram
 - 動画を読むときだけ `ffmpeg` と `ffprobe`(`PATH` 上。同梱はしません)
 - GPU 版: Apple Silicon の Mac(Metal)のみ
 
-### インストールとビルド
+### ダウンロードして使う(ビルド不要)
+[リリースページ](https://github.com/yukis-git/optflow-soil/releases/latest)から zip をダウンロードして展開します。インストーラーはありません。
+- **Windows(64 ビット):** `optflow-windows.zip` を展開し、`optflow-app.exe` を起動します。警告が出たら「詳細情報」→「実行」を選びます(署名していないためです)。
+- **Mac(Apple Silicon):** `optflow-macos-arm64.zip` を展開し、ターミナルで `cd ~/Downloads/optflow-macos && xattr -dr com.apple.quarantine . && ./optflow-app` を実行します。
+- 動画を解析するときだけ `ffmpeg` と `ffprobe` が必要です。アプリと同じフォルダーに置くか、`PATH` を通してください。
+
+### インストールとビルド(ソースから)
 ```sh
 git clone https://github.com/yukis-git/optflow-soil.git && cd optflow-soil
 cd rust && cargo build --release -p optflow-cli -p optflow-app   # target/release/optflow, optflow-app
@@ -118,7 +124,13 @@ a Metal GPU backend for Apple Silicon (`optflow-gpu`) and a desktop app (`optflo
 - `ffmpeg` and `ffprobe` on `PATH`, only for video input (not bundled)
 - GPU backend: Apple Silicon Mac (Metal) only
 
-### Install and build
+### Download and run (no build needed)
+Download a zip from the [releases page](https://github.com/yukis-git/optflow-soil/releases/latest) and unzip it. There is no installer.
+- **Windows (64-bit):** `optflow-windows.zip`, then run `optflow-app.exe`. At the warning choose "More info" then "Run anyway" (the build is unsigned).
+- **Mac (Apple Silicon):** `optflow-macos-arm64.zip`, then in a terminal: `cd ~/Downloads/optflow-macos && xattr -dr com.apple.quarantine . && ./optflow-app`.
+- Video input needs `ffmpeg` and `ffprobe` beside the app or on `PATH`.
+
+### Install and build (from source)
 ```sh
 git clone https://github.com/yukis-git/optflow-soil.git && cd optflow-soil
 cd rust && cargo build --release -p optflow-cli -p optflow-app   # target/release/optflow, optflow-app

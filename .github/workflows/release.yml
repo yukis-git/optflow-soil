@@ -1,0 +1,82 @@
+name: release
+
+# Builds the Windows and macOS (Apple Silicon) zips. A pushed tag `v*` attaches them to a GitHub
+# release; a manual run only builds and uploads them as artifacts, to check the packaging.
+# Uses the job's own GITHUB_TOKEN; no other secret. The tests run in windows.yml and macos.yml.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: rust
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --release -p optflow-app -p optflow-cli
+      - name: Headless smoke test
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "smoke"
+          $p = Start-Process -FilePath target\release\optflow-app.exe -ArgumentList '--headless-smoke', "`"$out`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - name: Package
+        run: |
+          $d = "..\dist\optflow-windows"
+          New-Item -ItemType Directory -Force -Path $d | Out-Null
+          Copy-Item target\release\optflow-app.exe, target\release\optflow.exe $d
+          Copy-Item ..\README.md, ..\LICENSE, ..\THIRD_PARTY_LICENSES.md $d
+          Compress-Archive -Path $d -DestinationPath ..\dist\optflow-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: optflow-windows
+          path: dist/optflow-windows.zip
+
+  macos:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (the command line with the Metal backend)
+        run: |
+          cargo build --release -p optflow-app
+          cargo build --release -p optflow-cli --features gpu
+      - name: Headless smoke test
+        run: target/release/optflow-app --headless-smoke "$RUNNER_TEMP/smoke"
+      - name: Package
+        run: |
+          d=../dist/optflow-macos
+          mkdir -p "$d"
+          cp target/release/optflow-app target/release/optflow "$d"
+          cp ../README.md ../LICENSE ../THIRD_PARTY_LICENSES.md "$d"
+          (cd ../dist && ditto -c -k --keepParent optflow-macos optflow-macos-arm64.zip)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: optflow-macos
+          path: dist/optflow-macos-arm64.zip
+
+  release:
+    needs: [windows, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" optflow-windows.zip optflow-macos-arm64.zip --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --notes-file .github/release-notes.md

@@ -106,19 +106,6 @@ jobs:
           "cargo test failed; see the test step"
           exit 1
 
-      - name: Package the zip (exe, CLI, README, LICENSE, THIRD_PARTY_LICENSES)
-        run: |
-          $d = "..\dist\optflow-windows"
-          New-Item -ItemType Directory -Force -Path $d | Out-Null
-          Copy-Item target\release\optflow-app.exe, target\release\optflow.exe $d
-          Copy-Item ..\README.md, ..\LICENSE, ..\THIRD_PARTY_LICENSES.md $d
-          Compress-Archive -Path "$d\*" -DestinationPath ..\dist\optflow-windows.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: optflow-windows-zip
-          path: dist/optflow-windows.zip
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -127,21 +114,3 @@ jobs:
             rust/target/release/optflow-app.exe
             rust/target/release/optflow.exe
             smoke-out
-
-  # Runs only for a pushed tag `v*` (never for a branch or a pull request): attaches the zip to a
-  # GitHub release. Uses the job's own GITHUB_TOKEN; no other secret.
-  release:
-    needs: windows
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: optflow-windows-zip
-      - name: Create the release and attach the zip
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" optflow-windows.zip --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --notes "Windows build (GUI not yet verified on real hardware). Noncommercial use only: see LICENSE."
