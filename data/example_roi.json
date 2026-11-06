@@ -1,0 +1,25 @@
+{
+ "polygon": [
+  [
+   697,
+   1695
+  ],
+  [
+   5356,
+   1726
+  ],
+  [
+   5418,
+   1810
+  ],
+  [
+   5398,
+   2278
+  ],
+  [
+   697,
+   2278
+  ]
+ ],
+ "note": "example ROI polygon (a strip), in full-resolution pixels of a 6240x4160 frame"
+}

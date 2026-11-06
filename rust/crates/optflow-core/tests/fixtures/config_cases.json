@@ -1,0 +1,1636 @@
+{
+ "default_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}",
+ "from_json": [
+  {
+   "text": "{\"max_disp\": \"x\"}",
+   "message": "config key 'max_disp' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"poc_peak_min\": \"x\"}",
+   "message": "config key 'poc_peak_min' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"median_thresh\": \"x\"}",
+   "message": "config key 'median_thresh' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"lam\": \"x\"}",
+   "message": "config key 'lam' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"bandwidth\": \"x\"}",
+   "message": "config key 'bandwidth' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"dc_cut\": \"x\"}",
+   "message": "config key 'dc_cut' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"sigma_w\": \"x\"}",
+   "message": "config key 'sigma_w' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"sigma_s\": \"x\"}",
+   "message": "config key 'sigma_s' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"conf_min\": \"x\"}",
+   "message": "config key 'conf_min' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"edge_guard\": \"x\"}",
+   "message": "config key 'edge_guard' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"edge_guard_min_area\": \"x\"}",
+   "message": "config key 'edge_guard_min_area' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"phase_tol\": \"x\"}",
+   "message": "config key 'phase_tol' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"ref_update_conf\": \"x\"}",
+   "message": "config key 'ref_update_conf' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"fb_radius\": \"x\"}",
+   "message": "config key 'fb_radius' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"fb_tol\": \"x\"}",
+   "message": "config key 'fb_tol' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"grid_step\": 2.5}",
+   "message": "config key 'grid_step' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"grid_step\": true}",
+   "message": "config key 'grid_step' must be an integer, got True"
+  },
+  {
+   "text": "{\"poc_win\": 2.5}",
+   "message": "config key 'poc_win' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"poc_win\": true}",
+   "message": "config key 'poc_win' must be an integer, got True"
+  },
+  {
+   "text": "{\"n_orient\": 2.5}",
+   "message": "config key 'n_orient' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"n_orient\": true}",
+   "message": "config key 'n_orient' must be an integer, got True"
+  },
+  {
+   "text": "{\"shape_order\": 2.5}",
+   "message": "config key 'shape_order' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"shape_order\": true}",
+   "message": "config key 'shape_order' must be an integer, got True"
+  },
+  {
+   "text": "{\"outer_iters\": 2.5}",
+   "message": "config key 'outer_iters' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"outer_iters\": true}",
+   "message": "config key 'outer_iters' must be an integer, got True"
+  },
+  {
+   "text": "{\"inner_iters\": 2.5}",
+   "message": "config key 'inner_iters' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"inner_iters\": true}",
+   "message": "config key 'inner_iters' must be an integer, got True"
+  },
+  {
+   "text": "{\"strain_win\": 2.5}",
+   "message": "config key 'strain_win' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"strain_win\": true}",
+   "message": "config key 'strain_win' must be an integer, got True"
+  },
+  {
+   "text": "{\"fb_max\": 2.5}",
+   "message": "config key 'fb_max' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"fb_max\": true}",
+   "message": "config key 'fb_max' must be an integer, got True"
+  },
+  {
+   "text": "{\"fb_min_support\": 2.5}",
+   "message": "config key 'fb_min_support' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"fb_min_support\": true}",
+   "message": "config key 'fb_min_support' must be an integer, got True"
+  },
+  {
+   "text": "{\"tavg\": 2.5}",
+   "message": "config key 'tavg' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"tavg\": true}",
+   "message": "config key 'tavg' must be an integer, got True"
+  },
+  {
+   "text": "{\"prewarp_freeze_at\": 2.5}",
+   "message": "config key 'prewarp_freeze_at' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"prewarp_freeze_at\": true}",
+   "message": "config key 'prewarp_freeze_at' must be an integer, got True"
+  },
+  {
+   "text": "{\"poc_win\": 64.0}",
+   "message": "config key 'poc_win' must be an integer, got 64.0"
+  },
+  {
+   "text": "{\"strain_win\": 15.0}",
+   "message": "config key 'strain_win' must be an integer, got 15.0"
+  },
+  {
+   "text": "{\"grid_step\": 1e16}",
+   "message": "config key 'grid_step' must be an integer, got 1e+16"
+  },
+  {
+   "text": "{\"grid_step\": 1e-5}",
+   "message": "config key 'grid_step' must be an integer, got 1e-05"
+  },
+  {
+   "text": "{\"grid_step\": 1e15}",
+   "message": "config key 'grid_step' must be an integer, got 1000000000000000.0"
+  },
+  {
+   "text": "{\"grid_step\": 123456789.125}",
+   "message": "config key 'grid_step' must be an integer, got 123456789.125"
+  },
+  {
+   "text": "{\"grid_step\": 0.0001}",
+   "message": "config key 'grid_step' must be an integer, got 0.0001"
+  },
+  {
+   "text": "{\"grid_step\": 1.5e300}",
+   "message": "config key 'grid_step' must be an integer, got 1.5e+300"
+  },
+  {
+   "text": "{\"poc_win\": -0.0}",
+   "message": "config key 'poc_win' must be an integer, got -0.0"
+  },
+  {
+   "text": "{\"grid_step\": 5e-324}",
+   "message": "config key 'grid_step' must be an integer, got 5e-324"
+  },
+  {
+   "text": "{\"grid_step\": 1.7976931348623157e308}",
+   "message": "config key 'grid_step' must be an integer, got 1.7976931348623157e+308"
+  },
+  {
+   "text": "{\"outer_iters\": null}",
+   "message": "config key 'outer_iters' must be an integer, got None"
+  },
+  {
+   "text": "{\"inner_iters\": \"2\"}",
+   "message": "config key 'inner_iters' must be an integer, got '2'"
+  },
+  {
+   "text": "{\"strain_win\": [15]}",
+   "message": "config key 'strain_win' must be an integer, got [15]"
+  },
+  {
+   "text": "{\"n_orient\": false}",
+   "message": "config key 'n_orient' must be an integer, got False"
+  },
+  {
+   "text": "{\"lam\": \"8\"}",
+   "message": "config key 'lam' must be a number, got '8'"
+  },
+  {
+   "text": "{\"lam\": true}",
+   "message": "config key 'lam' must be a number, got True"
+  },
+  {
+   "text": "{\"lam\": null}",
+   "message": "config key 'lam' must be a number, got None"
+  },
+  {
+   "text": "{\"lam\": [8]}",
+   "message": "config key 'lam' must be a number, got [8]"
+  },
+  {
+   "text": "{\"lam\": {\"a\": null, \"b\": [1, 2.5]}}",
+   "message": "config key 'lam' must be a number, got {'a': None, 'b': [1, 2.5]}"
+  },
+  {
+   "text": "{\"max_disp\": \"it's\"}",
+   "message": "config key 'max_disp' must be a number, got \"it's\""
+  },
+  {
+   "text": "{\"bandwidth\": \"say \\\"hi\\\"\"}",
+   "message": "config key 'bandwidth' must be a number, got 'say \"hi\"'"
+  },
+  {
+   "text": "{\"conf_min\": \"a\\nb\\t\\\\\"}",
+   "message": "config key 'conf_min' must be a number, got 'a\\nb\\t\\\\'"
+  },
+  {
+   "text": "{\"phase_tol\": \"\u00e9\"}",
+   "message": "config key 'phase_tol' must be a number, got '\u00e9'"
+  },
+  {
+   "text": "{\"ref_update_conf\": false}",
+   "message": "config key 'ref_update_conf' must be a number, got False"
+  },
+  {
+   "text": "{\"lam\": \"it's \\\"q\\\"\"}",
+   "message": "config key 'lam' must be a number, got 'it\\'s \"q\"'"
+  },
+  {
+   "text": "{\"lam\": \"\"}",
+   "message": "config key 'lam' must be a number, got ''"
+  },
+  {
+   "text": "{\"scales\": 1.0}",
+   "message": "config key 'scales' must be a list of numbers, got 1.0"
+  },
+  {
+   "text": "{\"scales\": [1.0, \"a\"]}",
+   "message": "config key 'scales' must be a list of numbers, got [1.0, 'a']"
+  },
+  {
+   "text": "{\"scales\": [true]}",
+   "message": "config key 'scales' must be a list of numbers, got [True]"
+  },
+  {
+   "text": "{\"scales\": \"0.6,1.0\"}",
+   "message": "config key 'scales' must be a list of numbers, got '0.6,1.0'"
+  },
+  {
+   "text": "{\"scales\": null}",
+   "message": "config key 'scales' must be a list of numbers, got None"
+  },
+  {
+   "text": "{\"scales\": [[1.0]]}",
+   "message": "config key 'scales' must be a list of numbers, got [[1.0]]"
+  },
+  {
+   "text": "{\"scales\": {}}",
+   "message": "config key 'scales' must be a list of numbers, got {}"
+  },
+  {
+   "text": "{\"scales\": [1.0, null]}",
+   "message": "config key 'scales' must be a list of numbers, got [1.0, None]"
+  },
+  {
+   "text": "{\"lam\": \"x\", \"grid_step\": 2.5}",
+   "message": "config key 'lam' must be a number, got 'x'"
+  },
+  {
+   "text": "{\"grid_step\": 2.5, \"lam\": \"x\"}",
+   "message": "config key 'grid_step' must be an integer, got 2.5"
+  },
+  {
+   "text": "{\"lam\": \"x\", \"grid_step\": 2.5, \"lam\": 3}",
+   "message": "config key 'grid_step' must be an integer, got 2.5"
+  },
+  {
+   "text": "[1, 2]",
+   "message": "config must be a JSON object"
+  },
+  {
+   "text": "3",
+   "message": "config must be a JSON object"
+  },
+  {
+   "text": "\"str\"",
+   "message": "config must be a JSON object"
+  },
+  {
+   "text": "null",
+   "message": "config must be a JSON object"
+  },
+  {
+   "text": "true",
+   "message": "config must be a JSON object"
+  },
+  {
+   "text": "[]",
+   "message": "config must be a JSON object"
+  },
+  {
+   "text": "{\"lambda\": 3, \"alpha\": 1}",
+   "message": "unknown config keys: ['alpha', 'lambda']"
+  },
+  {
+   "text": "{\"it's\": 1}",
+   "message": "unknown config keys: [\"it's\"]"
+  },
+  {
+   "text": "{\"lam\": 8, \"zzz\": 1, \"Zeta\": 2}",
+   "message": "unknown config keys: ['Zeta', 'zzz']"
+  },
+  {
+   "text": "{\"lam\": \"x\", \"foo\": 1}",
+   "message": "unknown config keys: ['foo']"
+  },
+  {
+   "text": "{\"scales\": []}",
+   "message": "scales must not be empty"
+  },
+  {
+   "text": "{\"poc_win\": 48}",
+   "message": "poc_win must be a power of two >= 16"
+  },
+  {
+   "text": "{\"poc_win\": 8}",
+   "message": "poc_win must be a power of two >= 16"
+  },
+  {
+   "text": "{\"poc_win\": 0}",
+   "message": "poc_win must be a power of two >= 16"
+  },
+  {
+   "text": "{\"poc_win\": -64}",
+   "message": "poc_win must be a power of two >= 16"
+  },
+  {
+   "text": "{\"grid_step\": 0}",
+   "message": "grid_step >= 1 and strain_win odd >= 5 required"
+  },
+  {
+   "text": "{\"grid_step\": -1}",
+   "message": "grid_step >= 1 and strain_win odd >= 5 required"
+  },
+  {
+   "text": "{\"strain_win\": 14}",
+   "message": "grid_step >= 1 and strain_win odd >= 5 required"
+  },
+  {
+   "text": "{\"strain_win\": 3}",
+   "message": "grid_step >= 1 and strain_win odd >= 5 required"
+  },
+  {
+   "text": "{\"strain_win\": -7}",
+   "message": "grid_step >= 1 and strain_win odd >= 5 required"
+  },
+  {
+   "text": "{\"dc_cut\": 0}",
+   "message": "dc_cut must be positive"
+  },
+  {
+   "text": "{\"dc_cut\": -1.0}",
+   "message": "dc_cut must be positive"
+  },
+  {
+   "text": "{\"phase_tol\": 0}",
+   "message": "phase_tol must be positive"
+  },
+  {
+   "text": "{\"phase_tol\": -0.4}",
+   "message": "phase_tol must be positive"
+  },
+  {
+   "text": "{\"shape_order\": 0}",
+   "message": "shape_order must be 1 or 2"
+  },
+  {
+   "text": "{\"shape_order\": 3}",
+   "message": "shape_order must be 1 or 2"
+  },
+  {
+   "text": "{\"shape_order\": -1}",
+   "message": "shape_order must be 1 or 2"
+  },
+  {
+   "text": "{\"shape_order\": 4294967297}",
+   "message": "shape_order must be 1 or 2"
+  },
+  {
+   "text": "{\"lam\": 4}",
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "text": "{\"sigma_w\": 0}",
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "text": "{\"sigma_s\": -1}",
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "text": "{\"scales\": [0.3, 1.0]}",
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "text": "{\"lam\": -8}",
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "text": "{\"bandwidth\": 0}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"bandwidth\": -0.5}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"max_disp\": 0}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"max_disp\": -3}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"median_thresh\": 0}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"median_thresh\": -1}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"n_orient\": 0}",
+   "message": "n_orient, outer_iters and inner_iters must be >= 1"
+  },
+  {
+   "text": "{\"outer_iters\": 0}",
+   "message": "n_orient, outer_iters and inner_iters must be >= 1"
+  },
+  {
+   "text": "{\"inner_iters\": 0}",
+   "message": "n_orient, outer_iters and inner_iters must be >= 1"
+  },
+  {
+   "text": "{\"n_orient\": -2}",
+   "message": "n_orient, outer_iters and inner_iters must be >= 1"
+  },
+  {
+   "text": "{\"conf_min\": -0.1}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"conf_min\": 1.5}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"conf_min\": 2}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"poc_peak_min\": -0.1}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"poc_peak_min\": 1.1}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"poc_peak_min\": 2}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"scales\": [], \"poc_win\": 48}",
+   "message": "scales must not be empty"
+  },
+  {
+   "text": "{\"poc_win\": 48, \"grid_step\": 0}",
+   "message": "poc_win must be a power of two >= 16"
+  },
+  {
+   "text": "{\"grid_step\": 0, \"dc_cut\": 0}",
+   "message": "grid_step >= 1 and strain_win odd >= 5 required"
+  },
+  {
+   "text": "{\"dc_cut\": 0, \"phase_tol\": 0}",
+   "message": "dc_cut must be positive"
+  },
+  {
+   "text": "{\"phase_tol\": 0, \"shape_order\": 3}",
+   "message": "phase_tol must be positive"
+  },
+  {
+   "text": "{\"shape_order\": 3, \"lam\": 4}",
+   "message": "shape_order must be 1 or 2"
+  },
+  {
+   "text": "{\"lam\": 4, \"bandwidth\": 0}",
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "text": "{\"bandwidth\": 0, \"n_orient\": 0}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"n_orient\": 0, \"conf_min\": 2}",
+   "message": "n_orient, outer_iters and inner_iters must be >= 1"
+  },
+  {
+   "text": "{\"max_disp\": 0, \"bandwidth\": 0, \"median_thresh\": 0}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"scales\": [0.3], \"conf_min\": 2}",
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "text": "{\"conf_min\": 2, \"poc_peak_min\": -1}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"outer_iters\": 0, \"inner_iters\": 0}",
+   "message": "n_orient, outer_iters and inner_iters must be >= 1"
+  },
+  {
+   "text": "{\"seq_mode\": 3}",
+   "message": "config key 'seq_mode' must be a string, got 3"
+  },
+  {
+   "text": "{\"seq_mode\": null}",
+   "message": "config key 'seq_mode' must be a string, got None"
+  },
+  {
+   "text": "{\"seq_mode\": \"x\"}",
+   "message": "seq_mode must be 'chain' or 'hybrid', got 'x'"
+  },
+  {
+   "text": "{\"seq_mode\": \"Hybrid\"}",
+   "message": "seq_mode must be 'chain' or 'hybrid', got 'Hybrid'"
+  },
+  {
+   "text": "{\"seq_mode\": \"\"}",
+   "message": "seq_mode must be 'chain' or 'hybrid', got ''"
+  },
+  {
+   "text": "{\"seq_mode\": \"it's\"}",
+   "message": "seq_mode must be 'chain' or 'hybrid', got \"it's\""
+  },
+  {
+   "text": "{\"seq_mode\": \"q\\u00e9\\n\"}",
+   "message": "seq_mode must be 'chain' or 'hybrid', got 'q\u00e9\\n'"
+  },
+  {
+   "text": "{\"tavg_model\": true}",
+   "message": "config key 'tavg_model' must be a string, got True"
+  },
+  {
+   "text": "{\"tavg_model\": \"linear\"}",
+   "message": "tavg_model must be 'affine' or 'dense', got 'linear'"
+  },
+  {
+   "text": "{\"tavg_align\": 1}",
+   "message": "config key 'tavg_align' must be true or false, got 1"
+  },
+  {
+   "text": "{\"tavg_align\": \"true\"}",
+   "message": "config key 'tavg_align' must be true or false, got 'true'"
+  },
+  {
+   "text": "{\"tavg_align\": null}",
+   "message": "config key 'tavg_align' must be true or false, got None"
+  },
+  {
+   "text": "{\"fb_radius\": 0}",
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "text": "{\"fb_radius\": 0.0}",
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "text": "{\"fb_tol\": 0}",
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "text": "{\"fb_tol\": -0.1}",
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "text": "{\"fb_max\": -1}",
+   "message": "fb_max must be >= 0"
+  },
+  {
+   "text": "{\"fb_min_support\": -1}",
+   "message": "fb_min_support must be >= 0 and tavg in [0, 64]"
+  },
+  {
+   "text": "{\"tavg\": -1}",
+   "message": "fb_min_support must be >= 0 and tavg in [0, 64]"
+  },
+  {
+   "text": "{\"tavg\": 65}",
+   "message": "fb_min_support must be >= 0 and tavg in [0, 64]"
+  },
+  {
+   "text": "{\"tavg\": 1000000000000}",
+   "message": "fb_min_support must be >= 0 and tavg in [0, 64]"
+  },
+  {
+   "text": "{\"prewarp_freeze_at\": -1}",
+   "message": "prewarp_freeze_at must be >= 0"
+  },
+  {
+   "text": "{\"prewarp_freeze_at\": 2.0}",
+   "message": "config key 'prewarp_freeze_at' must be an integer, got 2.0"
+  },
+  {
+   "text": "{\"seq_mode\": \"x\", \"scales\": []}",
+   "message": "seq_mode must be 'chain' or 'hybrid', got 'x'"
+  },
+  {
+   "text": "{\"scales\": [], \"fb_max\": -1}",
+   "message": "scales must not be empty"
+  },
+  {
+   "text": "{\"fb_max\": -1, \"fb_tol\": 0}",
+   "message": "fb_max must be >= 0"
+  },
+  {
+   "text": "{\"fb_tol\": 0, \"tavg\": 65}",
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "text": "{\"tavg\": 65, \"tavg_model\": \"x\"}",
+   "message": "fb_min_support must be >= 0 and tavg in [0, 64]"
+  },
+  {
+   "text": "{\"tavg_model\": \"x\", \"prewarp_freeze_at\": -1}",
+   "message": "tavg_model must be 'affine' or 'dense', got 'x'"
+  },
+  {
+   "text": "{\"prewarp_freeze_at\": -1, \"poc_win\": 2048}",
+   "message": "prewarp_freeze_at must be >= 0"
+  },
+  {
+   "text": "{\"fb_max\": -1, \"conf_min\": 2}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"poc_win\": 2048, \"tavg\": 65}",
+   "message": "fb_min_support must be >= 0 and tavg in [0, 64]"
+  },
+  {
+   "text": "{\"poc_win\": 2048}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"strain_win\": 257}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"sigma_w\": 256.0001}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"sigma_s\": 257}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"sigma_w\": 1e300}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"n_orient\": 22}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"n_orient\": 65, \"scales\": [1.0]}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"n_orient\": 17, \"scales\": [0.6, 1.0, 1.6, 2.0]}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"n_orient\": 1, \"scales\": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"poc_win\": 9223372036854775808}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"poc_win\": 4611686018427387904}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"strain_win\": 18446744073709551615}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"strain_win\": 9223372036854775809}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"n_orient\": 9223372036854775808}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"n_orient\": 18446744073709551615}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"poc_win\": 2048, \"grid_step\": 0}",
+   "message": "grid_step >= 1 and strain_win odd >= 5 required"
+  },
+  {
+   "text": "{\"poc_win\": 3000}",
+   "message": "poc_win must be a power of two >= 16"
+  },
+  {
+   "text": "{\"strain_win\": 256}",
+   "message": "grid_step >= 1 and strain_win odd >= 5 required"
+  },
+  {
+   "text": "{\"strain_win\": 301, \"conf_min\": 2}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"sigma_w\": 1000, \"lam\": 4}",
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "text": "{\"sigma_s\": 1000, \"bandwidth\": 0}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"n_orient\": 22, \"median_thresh\": 0}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "text": "{\"poc_win\": 2048, \"n_orient\": 0}",
+   "message": "n_orient, outer_iters and inner_iters must be >= 1"
+  },
+  {
+   "text": "{\"scales\": [], \"poc_win\": 2048}",
+   "message": "scales must not be empty"
+  },
+  {
+   "text": "{\"poc_win\": 2048, \"strain_win\": 257, \"sigma_w\": 300}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"grid_step\": 4097}",
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "text": "{\"grid_step\": 9223372036854775808}",
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "text": "{\"grid_step\": 18446744073709551615}",
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "text": "{\"edge_guard\": 256.5}",
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "text": "{\"edge_guard\": 256.0001}",
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "text": "{\"edge_guard\": 1e300}",
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "text": "{\"bandwidth\": 0.001}",
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "text": "{\"lam\": 268.2, \"scales\": [1.0]}",
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "text": "{\"grid_step\": 4097, \"edge_guard\": 300}",
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "text": "{\"grid_step\": 5000, \"poc_win\": 2048}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"grid_step\": 5000, \"sigma_w\": 300}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"edge_guard\": 1e300, \"strain_win\": 301}",
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "text": "{\"grid_step\": 9223372036854775808, \"scales\": []}",
+   "message": "scales must not be empty"
+  },
+  {
+   "text": "{\"grid_step\": 9223372036854775808, \"poc_win\": 3000}",
+   "message": "poc_win must be a power of two >= 16"
+  },
+  {
+   "text": "{\"grid_step\": 5000, \"conf_min\": 2}",
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "text": "{\"edge_guard\": 300, \"bandwidth\": 0}",
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  }
+ ],
+ "validate": [
+  {
+   "set": {
+    "max_disp": "nan"
+   },
+   "message": "max_disp must be a finite number"
+  },
+  {
+   "set": {
+    "max_disp": "inf"
+   },
+   "message": "max_disp must be a finite number"
+  },
+  {
+   "set": {
+    "max_disp": "-inf"
+   },
+   "message": "max_disp must be a finite number"
+  },
+  {
+   "set": {
+    "poc_peak_min": "nan"
+   },
+   "message": "poc_peak_min must be a finite number"
+  },
+  {
+   "set": {
+    "poc_peak_min": "inf"
+   },
+   "message": "poc_peak_min must be a finite number"
+  },
+  {
+   "set": {
+    "poc_peak_min": "-inf"
+   },
+   "message": "poc_peak_min must be a finite number"
+  },
+  {
+   "set": {
+    "median_thresh": "nan"
+   },
+   "message": "median_thresh must be a finite number"
+  },
+  {
+   "set": {
+    "median_thresh": "inf"
+   },
+   "message": "median_thresh must be a finite number"
+  },
+  {
+   "set": {
+    "median_thresh": "-inf"
+   },
+   "message": "median_thresh must be a finite number"
+  },
+  {
+   "set": {
+    "lam": "nan"
+   },
+   "message": "lam must be a finite number"
+  },
+  {
+   "set": {
+    "lam": "inf"
+   },
+   "message": "lam must be a finite number"
+  },
+  {
+   "set": {
+    "lam": "-inf"
+   },
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "set": {
+    "bandwidth": "nan"
+   },
+   "message": "bandwidth must be a finite number"
+  },
+  {
+   "set": {
+    "bandwidth": "inf"
+   },
+   "message": "bandwidth must be a finite number"
+  },
+  {
+   "set": {
+    "bandwidth": "-inf"
+   },
+   "message": "bandwidth must be a finite number"
+  },
+  {
+   "set": {
+    "dc_cut": "nan"
+   },
+   "message": "dc_cut must be a finite number"
+  },
+  {
+   "set": {
+    "dc_cut": "inf"
+   },
+   "message": "dc_cut must be a finite number"
+  },
+  {
+   "set": {
+    "dc_cut": "-inf"
+   },
+   "message": "dc_cut must be positive"
+  },
+  {
+   "set": {
+    "sigma_w": "nan"
+   },
+   "message": "sigma_w must be a finite number"
+  },
+  {
+   "set": {
+    "sigma_w": "inf"
+   },
+   "message": "sigma_w must be a finite number"
+  },
+  {
+   "set": {
+    "sigma_w": "-inf"
+   },
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "set": {
+    "sigma_s": "nan"
+   },
+   "message": "sigma_s must be a finite number"
+  },
+  {
+   "set": {
+    "sigma_s": "inf"
+   },
+   "message": "sigma_s must be a finite number"
+  },
+  {
+   "set": {
+    "sigma_s": "-inf"
+   },
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "set": {
+    "conf_min": "nan"
+   },
+   "message": "conf_min must be a finite number"
+  },
+  {
+   "set": {
+    "conf_min": "inf"
+   },
+   "message": "conf_min must be a finite number"
+  },
+  {
+   "set": {
+    "conf_min": "-inf"
+   },
+   "message": "conf_min must be a finite number"
+  },
+  {
+   "set": {
+    "edge_guard": "nan"
+   },
+   "message": "edge_guard must be a finite number"
+  },
+  {
+   "set": {
+    "edge_guard": "inf"
+   },
+   "message": "edge_guard must be a finite number"
+  },
+  {
+   "set": {
+    "edge_guard": "-inf"
+   },
+   "message": "edge_guard must be a finite number"
+  },
+  {
+   "set": {
+    "edge_guard_min_area": "nan"
+   },
+   "message": "edge_guard_min_area must be a finite number"
+  },
+  {
+   "set": {
+    "edge_guard_min_area": "inf"
+   },
+   "message": "edge_guard_min_area must be a finite number"
+  },
+  {
+   "set": {
+    "edge_guard_min_area": "-inf"
+   },
+   "message": "edge_guard_min_area must be a finite number"
+  },
+  {
+   "set": {
+    "phase_tol": "nan"
+   },
+   "message": "phase_tol must be a finite number"
+  },
+  {
+   "set": {
+    "phase_tol": "inf"
+   },
+   "message": "phase_tol must be a finite number"
+  },
+  {
+   "set": {
+    "phase_tol": "-inf"
+   },
+   "message": "phase_tol must be positive"
+  },
+  {
+   "set": {
+    "ref_update_conf": "nan"
+   },
+   "message": "ref_update_conf must be a finite number"
+  },
+  {
+   "set": {
+    "ref_update_conf": "inf"
+   },
+   "message": "ref_update_conf must be a finite number"
+  },
+  {
+   "set": {
+    "ref_update_conf": "-inf"
+   },
+   "message": "ref_update_conf must be a finite number"
+  },
+  {
+   "set": {
+    "fb_radius": "nan"
+   },
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "set": {
+    "fb_radius": "inf"
+   },
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "set": {
+    "fb_radius": "-inf"
+   },
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "set": {
+    "fb_tol": "nan"
+   },
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "set": {
+    "fb_tol": "inf"
+   },
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "set": {
+    "fb_tol": "-inf"
+   },
+   "message": "fb_radius must be finite and nonzero (negative: 4 sigma_w), fb_tol finite and positive"
+  },
+  {
+   "set": {
+    "scales": [
+     0.6,
+     "nan",
+     1.6
+    ]
+   },
+   "message": "scales must be finite numbers"
+  },
+  {
+   "set": {
+    "scales": [
+     1.0,
+     "inf"
+    ]
+   },
+   "message": "scales must be finite numbers"
+  },
+  {
+   "set": {
+    "scales": [
+     1.0,
+     "-inf"
+    ]
+   },
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "set": {
+    "scales": [
+     "nan",
+     1.0
+    ]
+   },
+   "message": "scales must be finite numbers"
+  },
+  {
+   "set": {
+    "scales": [
+     "inf"
+    ]
+   },
+   "message": "scales must be finite numbers"
+  },
+  {
+   "set": {
+    "lam": "nan",
+    "max_disp": "inf"
+   },
+   "message": "max_disp must be a finite number"
+  },
+  {
+   "set": {
+    "scales": [
+     "nan"
+    ],
+    "lam": "nan"
+   },
+   "message": "lam must be a finite number"
+  },
+  {
+   "set": {
+    "scales": [
+     "inf"
+    ],
+    "bandwidth": 0.0
+   },
+   "message": "scales must be finite numbers"
+  },
+  {
+   "set": {
+    "bandwidth": "nan",
+    "max_disp": 0.0
+   },
+   "message": "bandwidth must be a finite number"
+  },
+  {
+   "set": {
+    "conf_min": "nan",
+    "poc_peak_min": 2.0
+   },
+   "message": "conf_min must be a finite number"
+  },
+  {
+   "set": {
+    "scales": [],
+    "lam": "nan"
+   },
+   "message": "scales must not be empty"
+  },
+  {
+   "set": {
+    "lam": "nan",
+    "poc_win": 48
+   },
+   "message": "poc_win must be a power of two >= 16"
+  },
+  {
+   "set": {
+    "edge_guard": "inf",
+    "n_orient": 0
+   },
+   "message": "edge_guard must be a finite number"
+  },
+  {
+   "set": {
+    "sigma_w": 256.0001
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "sigma_s": 1e+300
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "strain_win": 257
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "poc_win": 2048
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "poc_win": 9223372036854775808
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "n_orient": 22
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "n_orient": 9223372036854775808
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "n_orient": 18446744073709551615
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "n_orient": 18446744073709551615,
+    "scales": [
+     1.0
+    ]
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "n_orient": 1,
+    "scales": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "strain_win": 18446744073709551615
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "poc_win": 4611686018427387904
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "sigma_w": "inf",
+    "poc_win": 2048
+   },
+   "message": "sigma_w must be a finite number"
+  },
+  {
+   "set": {
+    "sigma_w": "nan",
+    "n_orient": 100
+   },
+   "message": "sigma_w must be a finite number"
+  },
+  {
+   "set": {
+    "scales": [
+     "inf"
+    ],
+    "n_orient": 100
+   },
+   "message": "scales must be finite numbers"
+  },
+  {
+   "set": {
+    "strain_win": 301,
+    "conf_min": 2.0
+   },
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  },
+  {
+   "set": {
+    "n_orient": 100,
+    "bandwidth": 0.0
+   },
+   "message": "bandwidth, max_disp and median_thresh must be positive"
+  },
+  {
+   "set": {
+    "grid_step": 4097
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "grid_step": 2147483648
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "grid_step": 9223372036854775808
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "grid_step": 18446744073709551615
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "edge_guard": 256.0001
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "edge_guard": 1e+300
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "bandwidth": 0.01
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "bandwidth": 1e-300
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "lam": 268.2,
+    "scales": [
+     1.0
+    ]
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "lam": 1e+308,
+    "scales": [
+     10.0
+    ]
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "grid_step": 4097,
+    "edge_guard": 300.0
+   },
+   "message": "grid_step <= 4096 and an edge guard (edge_guard, or the automatic one from lam, scales and bandwidth) <= 256 px required"
+  },
+  {
+   "set": {
+    "grid_step": 9223372036854775808,
+    "poc_win": 2048
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "grid_step": 9223372036854775808,
+    "n_orient": 22
+   },
+   "message": "at most 64 filters (n_orient * len(scales)); sigma_w, sigma_s <= 256, strain_win <= 255 and poc_win <= 1024 required"
+  },
+  {
+   "set": {
+    "grid_step": 9223372036854775808,
+    "scales": []
+   },
+   "message": "scales must not be empty"
+  },
+  {
+   "set": {
+    "edge_guard": 1e+300,
+    "conf_min": 2.0
+   },
+   "message": "conf_min and poc_peak_min must lie in [0, 1]"
+  }
+ ],
+ "non_standard_json": [
+  {
+   "text": "{\"lam\": NaN}",
+   "message": "lam must be a finite number"
+  },
+  {
+   "text": "{\"max_disp\": Infinity}",
+   "message": "max_disp must be a finite number"
+  },
+  {
+   "text": "{\"scales\": [1.0, -Infinity]}",
+   "message": "shortest wavelength lam*min(scales) must be >= 3 px; sigmas must be positive"
+  },
+  {
+   "text": "{\"grid_step\": NaN}",
+   "message": "config key 'grid_step' must be an integer, got nan"
+  },
+  {
+   "text": "{\"lam\": 1e999}",
+   "message": "lam must be a finite number"
+  },
+  {
+   "text": "{\"scales\": [1e999]}",
+   "message": "scales must be finite numbers"
+  },
+  {
+   "text": "{\"conf_min\": -Infinity}",
+   "message": "conf_min must be a finite number"
+  }
+ ],
+ "syntax": [
+  {
+   "text": "{",
+   "message": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+  },
+  {
+   "text": "{\"lam\": }",
+   "message": "Expecting value: line 1 column 9 (char 8)"
+  },
+  {
+   "text": "",
+   "message": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+   "text": "{'lam': 1}",
+   "message": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+  },
+  {
+   "text": "{\"lam\": 1,}",
+   "message": "Expecting property name enclosed in double quotes: line 1 column 11 (char 10)"
+  }
+ ],
+ "valid": [
+  {
+   "text": "{}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"lam\": 10, \"max_disp\": 64, \"scales\": [0.5, 1, 2], \"outer_iters\": 4}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 64.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 10.0,\n  \"scales\": [\n    0.5,\n    1.0,\n    2.0\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 4,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"conf_min\": 0, \"poc_peak_min\": 1, \"n_orient\": 1, \"outer_iters\": 1, \"inner_iters\": 1}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 1.0,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 1,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 1,\n  \"inner_iters\": 1,\n  \"conf_min\": 0.0,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"edge_guard\": -1, \"edge_guard_min_area\": -1, \"ref_update_conf\": 2}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 2.0,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"scales\": [0.375, 1.0]}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.375,\n    1.0\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"lam\": 1e-5, \"max_disp\": 1e16, \"scales\": [400000, 1e6]}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 1e+16,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 1e-05,\n  \"scales\": [\n    400000.0,\n    1000000.0\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"poc_win\": 128, \"grid_step\": 8, \"strain_win\": 5, \"shape_order\": 2}",
+   "to_json": "{\n  \"grid_step\": 8,\n  \"poc_win\": 128,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 2,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 5,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"max_disp\": 1e-7, \"dc_cut\": 5e-324, \"sigma_w\": 256.0}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 1e-07,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 5e-324,\n  \"sigma_w\": 256.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"poc_win\": 1024, \"strain_win\": 255, \"sigma_w\": 256, \"sigma_s\": 256.0}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 1024,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 256.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 256.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 255,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"n_orient\": 64, \"scales\": [1.0]}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    1.0\n  ],\n  \"n_orient\": 64,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"n_orient\": 16, \"scales\": [0.6, 1.0, 1.6, 2.0]}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6,\n    2.0\n  ],\n  \"n_orient\": 16,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"n_orient\": 1, \"scales\": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0,\n    1.0\n  ],\n  \"n_orient\": 1,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"grid_step\": 4096, \"edge_guard\": 256}",
+   "to_json": "{\n  \"grid_step\": 4096,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": 256.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"grid_step\": 4096}",
+   "to_json": "{\n  \"grid_step\": 4096,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"edge_guard\": 256.0}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": 256.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"lam\": 268.0, \"scales\": [1.0]}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 268.0,\n  \"scales\": [\n    1.0\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"edge_guard\": 256, \"bandwidth\": 1e-9}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 1e-09,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": 256.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"seq_mode\": \"hybrid\", \"fb_max\": 0, \"fb_radius\": 12.5, \"fb_min_support\": 0, \"fb_tol\": 0.25}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"hybrid\",\n  \"fb_max\": 0,\n  \"fb_radius\": 12.5,\n  \"fb_min_support\": 0,\n  \"fb_tol\": 0.25,\n  \"tavg\": 0,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 0\n}"
+  },
+  {
+   "text": "{\"seq_mode\": \"hybrid\", \"tavg\": 3, \"tavg_align\": true, \"tavg_model\": \"dense\", \"prewarp_freeze_at\": 3}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"hybrid\",\n  \"fb_max\": 10,\n  \"fb_radius\": -1.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 0.5,\n  \"tavg\": 3,\n  \"tavg_align\": true,\n  \"tavg_model\": \"dense\",\n  \"prewarp_freeze_at\": 3\n}"
+  },
+  {
+   "text": "{\"tavg\": 64, \"fb_radius\": -3, \"fb_tol\": 1e-9, \"prewarp_freeze_at\": 1000000}",
+   "to_json": "{\n  \"grid_step\": 16,\n  \"poc_win\": 64,\n  \"max_disp\": 32.0,\n  \"poc_peak_min\": 0.1,\n  \"median_thresh\": 2.0,\n  \"lam\": 8.0,\n  \"scales\": [\n    0.6,\n    1.0,\n    1.6\n  ],\n  \"n_orient\": 4,\n  \"bandwidth\": 0.5,\n  \"dc_cut\": 2.0,\n  \"sigma_w\": 4.0,\n  \"shape_order\": 1,\n  \"sigma_s\": 4.0,\n  \"outer_iters\": 8,\n  \"inner_iters\": 2,\n  \"conf_min\": 0.2,\n  \"edge_guard\": -1.0,\n  \"edge_guard_min_area\": -1.0,\n  \"phase_tol\": 0.4,\n  \"strain_win\": 15,\n  \"ref_update_conf\": 0.5,\n  \"seq_mode\": \"chain\",\n  \"fb_max\": 10,\n  \"fb_radius\": -3.0,\n  \"fb_min_support\": 20,\n  \"fb_tol\": 1e-09,\n  \"tavg\": 64,\n  \"tavg_align\": false,\n  \"tavg_model\": \"affine\",\n  \"prewarp_freeze_at\": 1000000\n}"
+  }
+ ]
+}

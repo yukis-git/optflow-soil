@@ -1,0 +1,25 @@
+[package]
+name = "optflow-cli"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "optflow"
+path = "src/main.rs"
+
+[features]
+# fused multiply-add in the hot loops of optflow-core (off by default; see its src/madd.rs)
+fma = ["optflow-core/fma"]
+# Metal GPU backend for the fine stage (macOS only; off by default)
+gpu = ["dep:optflow-gpu"]
+
+[dependencies]
+optflow-core = { path = "../optflow-core" }
+anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png", "tiff", "jpeg", "bmp"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+optflow-gpu = { path = "../optflow-gpu", optional = true }

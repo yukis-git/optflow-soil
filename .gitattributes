@@ -1,0 +1,14 @@
+# Binary data: the bytes are never converted (no end-of-line conversion, no text diff). On Windows,
+# core.autocrlf would otherwise be free to change a file that git takes for text.
+*.npy binary
+*.png binary
+*.jpg binary
+*.tif binary
+*.bmp binary
+*.mp4 binary
+
+# Text fixtures and tables that the tests read and compare byte for byte, and the scripts that bash
+# runs: LF on every platform.
+rust/crates/*/tests/fixtures/*.json text eol=lf
+rust/crates/optflow-core/tests/atan2_mpmath.txt text eol=lf
+*.sh text eol=lf

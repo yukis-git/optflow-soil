@@ -1,0 +1,147 @@
+name: windows
+
+# Builds and tests the Windows version of optflow-app, runs it headless on a synthetic image
+# sequence (the same library path as the window) and uploads the exe and the outputs.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: rust
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: windows-${{ hashFiles('rust/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: windows-${{ hashFiles('rust/Cargo.lock') }}-
+
+      - name: Toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: ffmpeg (for the CLI tests and the video step; the app itself never downloads it)
+        continue-on-error: true
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Test optflow-core, optflow-cli, optflow-app
+        id: tests
+        continue-on-error: true
+        run: cargo test --no-fail-fast -p optflow-core -p optflow-cli -p optflow-app
+
+      - name: Numbers of the xdic parity tests (x86_64 vs the aarch64 reference)
+        continue-on-error: true
+        run: cargo test -p optflow-core --test parity_xdic -- --nocapture --test-threads=1
+
+      - name: Build release
+        run: cargo build --release -p optflow-app -p optflow-cli
+
+      - name: Headless smoke test (the exe, run for real; Japanese path with a space)
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "スモーク テスト"
+          $p = Start-Process -FilePath target\release\optflow-app.exe -ArgumentList '--headless-smoke', "`"$out`"" -Wait -PassThru
+          "exit code: $($p.ExitCode)"
+          if (Test-Path "$out\smoke_error.txt") { Get-Content "$out\smoke_error.txt" }
+          if ($p.ExitCode -ne 0) { exit 1 }
+          Get-Content "$out\smoke_report.txt"
+          New-Item -ItemType Directory -Force -Path ..\smoke-out | Out-Null
+          Copy-Item -Recurse "$out\*" ..\smoke-out
+
+      - name: Launch check (the window opens and stays up; best effort, the runner may lack OpenGL)
+        continue-on-error: true
+        run: |
+          $env:OPTFLOW_APP_NO_DIALOG = "1"
+          $p = Start-Process -FilePath target\release\optflow-app.exe -PassThru
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) {
+            "window process exited early with code $($p.ExitCode)"
+            $f = Join-Path $env:TEMP "optflow-app-error.txt"
+            if (Test-Path $f) { Get-Content $f }
+            exit 1
+          }
+          "window process is alive after 10 s (id $($p.Id))"
+          Stop-Process -Id $p.Id
+
+      - name: Video through ffmpeg (best effort, only if the runner has ffmpeg)
+        continue-on-error: true
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { "no ffmpeg on this runner; skipped"; exit 0 }
+          $imgs = Join-Path $env:RUNNER_TEMP "スモーク テスト\images"
+          $vid = Join-Path $env:RUNNER_TEMP "テスト 動画.avi"
+          ffmpeg -v error -y -framerate 5 -i "$imgs\f%03d.png" -c:v mjpeg -q:v 1 "$vid"
+          target\release\optflow.exe seq --frames "$vid" --out (Join-Path $env:RUNNER_TEMP "video-run") --set tavg=0
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "video run ok"
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: windows-${{ hashFiles('rust/Cargo.lock') }}-${{ github.sha }}
+
+      - name: Fail the job if the tests failed
+        if: steps.tests.outcome == 'failure'
+        run: |
+          "cargo test failed; see the test step"
+          exit 1
+
+      - name: Package the zip (exe, CLI, README, LICENSE, THIRD_PARTY_LICENSES)
+        run: |
+          $d = "..\dist\optflow-windows"
+          New-Item -ItemType Directory -Force -Path $d | Out-Null
+          Copy-Item target\release\optflow-app.exe, target\release\optflow.exe $d
+          Copy-Item ..\README.md, ..\LICENSE, ..\THIRD_PARTY_LICENSES.md $d
+          Compress-Archive -Path "$d\*" -DestinationPath ..\dist\optflow-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: optflow-windows-zip
+          path: dist/optflow-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optflow-app-windows
+          path: |
+            rust/target/release/optflow-app.exe
+            rust/target/release/optflow.exe
+            smoke-out
+
+  # Runs only for a pushed tag `v*` (never for a branch or a pull request): attaches the zip to a
+  # GitHub release. Uses the job's own GITHUB_TOKEN; no other secret.
+  release:
+    needs: windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: optflow-windows-zip
+      - name: Create the release and attach the zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" optflow-windows.zip --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --notes "Windows build (GUI not yet verified on real hardware). Noncommercial use only: see LICENSE."

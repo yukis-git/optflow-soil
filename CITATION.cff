@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "optflow-soil: dense phase tracking of soil strain from images and video"
+type: software
+authors:
+  - family-names: "Sakata"
+    given-names: "Yuki"
+license: LicenseRef-PolyForm-Noncommercial-1.0.0
+repository-code: "https://github.com/yukis-git/optflow-soil"
+version: "0.1.0"
+date-released: "2026-11-06"

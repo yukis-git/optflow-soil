@@ -1,0 +1,27 @@
+[package]
+name = "optflow-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+rustfft = "6.2"
+num-complex = "0.4"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = "2"
+
+[features]
+# fused multiply-add in the hot loops (see src/madd.rs): faster on aarch64, results differ in the
+# last bits; off by default.
+# NON-ADDITIVE: it changes the results (by about 1e-7 px), not just the speed, and cargo unifies a
+# feature across the whole dependency graph. It must stay off by default, and no dependent crate
+# may enable it implicitly (only optflow-cli's own opt-in `fma` feature forwards to it).
+fma = []
+
+[dev-dependencies]
+proptest = "1"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

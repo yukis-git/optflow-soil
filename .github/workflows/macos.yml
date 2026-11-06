@@ -1,0 +1,39 @@
+name: macos
+
+# Tests of optflow-core, optflow-cli (default features) and optflow-app on macOS. The Metal backend
+# (optflow-gpu) needs a real GPU and is not run here.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: macos-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: macos-
+
+      - name: ffmpeg (for the CLI tests that decode video)
+        continue-on-error: true
+        run: brew install ffmpeg
+
+      - name: Test optflow-core, optflow-cli, optflow-app
+        run: cargo test --release --no-fail-fast -p optflow-core -p optflow-cli -p optflow-app

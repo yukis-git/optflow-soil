@@ -1,0 +1,27 @@
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+python/.venv/
+rust/target/
+target/
+
+# Outputs, videos and private inputs stay out of the repository.
+demo_out/
+out/
+output/
+results/
+crack_eval_work/
+crack_eval_out/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.m4v
+*.zip
+
+# .npy files are fields written by runs; only the test fixtures are tracked.
+*.npy
+!rust/crates/optflow-core/tests/fixtures/*.npy
+!rust/crates/optflow-core/tests/fixtures/xdic/*.npy

@@ -1,0 +1,6 @@
+# Cross-compiling the Windows build on a Mac (`brew install mingw-w64`):
+#   cargo build --release -p optflow-app --target x86_64-pc-windows-gnu
+# The C runtime and libgcc are linked statically so the exe needs only system DLLs.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-static"]

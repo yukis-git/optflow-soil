@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/optflow-core", "crates/optflow-cli", "crates/optflow-gpu", "crates/optflow-app"]
+default-members = ["crates/optflow-core", "crates/optflow-cli", "crates/optflow-app"]
+
+[workspace.dependencies]
+# float_roundtrip: parse floats exactly (the default fast path is 1-2 ULP off for 17 digits)
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.test]
+opt-level = 2
