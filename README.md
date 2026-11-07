@@ -85,7 +85,10 @@ cd python && .venv/bin/python -m demo.run_demo --size small --out ../demo_out
 `--size small` は動作確認用で精度は低いです。詳細は [python/demo/README.md](python/demo/README.md)。
 
 ### アプリの使い方
-`rust/target/release/optflow-app` を起動し、画像列または動画を開き、ROI を多角形で指定し、プリセット(推奨/標準)を選んで実行します。
+`rust/target/release/optflow-app` を起動し、画像列または動画を開き、ROI を指定し、プリセット(推奨/標準)を選んで実行します。
+- **ROI:** 画像上をドラッグすると四角形を作ります。作った後は角と辺の中央の点をドラッグして変更でき、辺のダブルクリックで頂点を追加、頂点の右クリックで削除します(クリックで頂点を順に置く多角形も作れます)。
+- **解析中の表示:** フレームが終わるごとに分布(gmax、ux、uy、信頼度)を表示します。表示は結果のファイルを変えません。
+- **中止と再開:** 「中止」は現在のフレームが終わってから止まり、途中経過を保存します。解析中も定期的に自動保存します(既定 5 分ごと、書き込みが実行時間の約 5 % を超えないように間隔を延ばします)。同じ出力先を開くと「再開」が出ます。入力、ROI、設定、アプリの版がすべて同じときだけ再開でき、再開した結果のファイルは中断しなかった場合とバイト単位で同じです(`timing.json` の時間の値を除く)。再開用データは `run_NNN/checkpoint.ofck` で、完了すると消えます。亀裂モデルでは再開できません。
 結果の表示(ux, uy, ひずみ、gmax など)、統計、CSV・PNG の書き出しができます。画面は日本語です。
 `--headless-smoke OUT` で、窓を開かずに合成画像列で一巡する自己確認ができます。
 
@@ -175,7 +178,10 @@ Synthesises a footing settling into sand, sets an ROI, tracks, compares with the
 `--size small` is a smoke test with low accuracy. See [python/demo/README.md](python/demo/README.md) (Japanese).
 
 ### Using the app
-Run `rust/target/release/optflow-app`, open an image sequence or video, draw the ROI polygon, choose a preset (recommended/standard) and run.
+Run `rust/target/release/optflow-app`, open an image sequence or video, set the ROI, choose a preset (recommended/standard) and run.
+- **ROI:** drag on the image to make a rectangle. Then drag corners and edge midpoints to change it, double-click an edge to add a vertex, right-click a vertex to delete it (clicking vertices one by one also draws a polygon).
+- **During a run:** the distribution of each finished frame is shown (gmax, ux, uy, confidence). Showing it does not change the output files.
+- **Stop and resume:** "中止" stops after the current frame and saves the progress. Progress is also saved periodically during a run (every 5 minutes by default, less often if the write would cost more than about 5 % of the run time). Opening the same output folder offers "再開". A run resumes only with the same input, ROI, settings and app version, and its output files are byte-identical to an uninterrupted run (except the seconds in `timing.json`). The resume data is `run_NNN/checkpoint.ofck`; it is removed when the run finishes. Crack-model runs cannot be resumed.
 It shows the fields (ux, uy, strains, gmax), statistics, and exports CSV and PNG. The interface is in Japanese.
 `--headless-smoke OUT` runs a self-check on a synthetic sequence without opening a window.
 

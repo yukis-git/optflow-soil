@@ -10,6 +10,8 @@ pub mod fonts;
 pub mod job;
 pub mod messages;
 pub mod power;
+pub mod resume;
+pub mod roi_edit;
 pub mod settings;
 pub mod smoke;
 pub mod source;

@@ -19,15 +19,26 @@ xattr -dr com.apple.quarantine .
 
 動画を解析するときだけ `ffmpeg` と `ffprobe` が必要です。アプリと同じフォルダーに置くか、PATH を通してください。
 
+## アプリの操作
+- ROI は画像上のドラッグで作り、角と辺の中央の点をドラッグして変更できます。
+- 解析中はフレームが終わるごとに分布を表示します。
+- 「中止」は現在のフレームが終わってから止まり、途中経過を保存します。解析中も定期的に自動保存します。同じ出力先を開くと「再開」できます。再開した結果のファイルは、中断しなかった場合とバイト単位で同じです(`timing.json` の時間の値を除く)。亀裂モデルでは再開できません。
+
 ## 既知の制限
 - **Windows の画面は実機で未確認です。** OpenGL 2.0 以上が必要で、リモートデスクトップや仮想マシンでは開かないことがあります。
-- **Mac のアプリの画面も、このビルドでは確認していません。** 自動テストでは画面を開かずに動作を確かめています。
+- **Mac の画面は、プログラムからの入力で一連の操作を確認しました。** 実際のマウスの操作感は未確認です。
+- 「中止」は処理中のフレームが終わるまで待ちます。6240×4160 の全面では 2〜6 分かかることがあります。
+- 再開は、中断時と同じアプリの版でだけできます。アプリを更新すると、以前の版で中断した解析は再開できません。
+- 長い動画での再開にかかる時間は未測定です。動画は先頭から読み直すため、位置が後ろほど時間がかかります。
+- `scale` が 2 以上のとき、解析中の分布は画像に重ねて表示されません。
 - 亀裂モデルは試験機能で、既定はオフです。判定基準は未検証です。
-- GPU での計算は、Mac のコマンドライン版（`--device gpu`）だけです。アプリは CPU で動きます。
+- GPU での計算は、Mac のコマンドライン版（`--device gpu`）だけです。アプリは CPU で動きます。同じ設定で、1 フレームあたりの時間は 1920×1080 で CPU 8.6 秒に対し GPU 3.4 秒、6240×4160 で CPU 113 秒に対し GPU 44 秒でした（Apple M4 での測定）。
 
 ---
 
 ## Download and run
 No installer: unzip and run. **Windows:** `optflow-windows.zip`, run `optflow-app.exe`; at the warning choose "More info" then "Run anyway" (the build is unsigned). **Mac (Apple Silicon):** `optflow-macos-arm64.zip`, then in a terminal: `cd ~/Downloads/optflow-macos && xattr -dr com.apple.quarantine . && ./optflow-app`. Video input needs `ffmpeg` and `ffprobe` beside the app or on `PATH`.
 
-**Known limits:** the app window has not been checked on real Windows hardware or from this macOS build (CI runs it headless). Windows needs OpenGL 2.0+ and may not open under remote desktop or in a VM. The crack model is experimental and off by default. GPU computing is available only in the Mac command line (`--device gpu`).
+**In the app:** drag on the image to make the ROI, then drag corners and edge midpoints to change it. The distribution of each finished frame is shown during a run. "中止" stops after the current frame and saves the progress, progress is also saved periodically, and opening the same output folder offers "再開". A resumed run's output files are byte-identical to an uninterrupted run (except the seconds in `timing.json`). Crack-model runs cannot be resumed.
+
+**Known limits:** the app window has not been checked on real Windows hardware (CI runs it headless). Windows needs OpenGL 2.0+ and may not open under remote desktop or in a VM. On Mac the full flow was driven with programmatic input; real mouse feel is unchecked. "中止" waits for the current frame, which can take 2-6 minutes on a whole 6240x4160 image. A run resumes only with the app version that started it, so updating the app means earlier stopped runs cannot be resumed. Resume time on long videos is unmeasured; the decoder reads from the start, so it grows with position. At `scale` 2 or more the live map is not overlaid on the image. The crack model is experimental and off by default. GPU computing is available only in the Mac command line (`--device gpu`); the app runs on the CPU. With the same settings, seconds per frame were 8.6 on CPU and 3.4 on GPU at 1920x1080, and 113 on CPU and 44 on GPU at 6240x4160 (measured on an Apple M4).

@@ -29,6 +29,7 @@ use crate::tile::refine_tiled_from;
 use crate::tile::{refine_tiled_from_on, tile_margin, Rect};
 
 mod hybrid;
+pub mod resume;
 mod xdic_leg;
 
 use crate::xdic::{CrackOut, Poly};

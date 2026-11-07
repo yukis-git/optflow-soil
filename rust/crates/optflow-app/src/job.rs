@@ -9,13 +9,15 @@ use std::thread::JoinHandle;
 
 use anyhow::{Context, Result};
 use optflow_cli::args::{Cli, Command, CropMode, Device};
-use optflow_cli::run::{run_with, Hooks};
+use optflow_cli::checkpoint::{self, Checkpointing, Policy, SaveInfo};
+use optflow_cli::run::{run_checkpointed, run_with, Hooks};
 use optflow_core::image::Image;
 use optflow_core::track::TrackResult;
 
 use crate::fields::Fields;
 use crate::messages;
 use crate::power;
+use crate::resume;
 use crate::settings::Settings;
 use crate::stats::{frame_stats, FrameStats};
 
@@ -34,13 +36,28 @@ pub struct JobSpec {
     pub settings: Settings,
     /// The run folder (created; `frame_NNNNN` folders are written into it).
     pub out: PathBuf,
+    /// Save checkpoints: periodically by this policy and when stopped. `None`: no checkpoints. A
+    /// crack run has none in any case.
+    pub autosave: Option<Policy>,
+    /// Continue from the checkpoint in `out`.
+    pub resume: bool,
 }
 
 /// Messages from the worker to the window.
 #[derive(Debug)]
 pub enum Msg {
-    Started { total: Option<usize> },
-    Frame { stats: FrameStats },
+    Started {
+        total: Option<usize>,
+    },
+    Frame {
+        stats: FrameStats,
+    },
+    /// A resumed run: the results that exist already.
+    Restored {
+        stats: Vec<FrameStats>,
+    },
+    /// A checkpoint was written.
+    Saved(SaveInfo),
     Warn(String),
     Finished,
     Cancelled,
@@ -92,6 +109,25 @@ pub fn output_bytes_per_result(w: usize, h: usize, settings: &Settings) -> u64 {
     px * per_px
 }
 
+/// The largest checkpoint a run can leave, in bytes: what cannot be recomputed from the input, at
+/// the (scaled) image size; a ROI makes it smaller. Per pixel: two displacements, the link
+/// confidence (a double), the previous leg and its confidence; a hybrid run also has two bit masks,
+/// the counter of carried frames, the carried displacement of pixels in fallback and the adjacent
+/// leg. Much of this collapses while nothing has moved or fallen back. Crack runs have none.
+pub fn checkpoint_bytes(w: usize, h: usize, settings: &Settings) -> u64 {
+    if settings.crack {
+        return 0;
+    }
+    let scale = settings.scale.max(1) as usize;
+    let px = (w / scale) as u64 * (h / scale) as u64;
+    let chain_bytes = 8 + 8 + 8 + 4;
+    if settings.seq_mode == "hybrid" {
+        px * (chain_bytes + 1 + 8 + 8) + px / 4
+    } else {
+        px * chain_bytes
+    }
+}
+
 /// `1.2 GB`, `850 MB` (decimal, as file managers show them).
 pub fn fmt_bytes(n: u64) -> String {
     if n >= 999_500_000 {
@@ -104,7 +140,7 @@ pub fn fmt_bytes(n: u64) -> String {
 /// The note beside the start button. `results`: how many results the run gives, if known.
 pub fn output_note(w: usize, h: usize, settings: &Settings, results: Option<usize>) -> String {
     let one = output_bytes_per_result(w, h, settings);
-    match results {
+    let mut note = match results {
         Some(n) if n >= 1 => format!(
             "保存サイズの目安: 1 フレームあたり約 {} × {n} = 約 {}(ROI によらず画像全体の大きさで保存します)",
             fmt_bytes(one),
@@ -114,7 +150,15 @@ pub fn output_note(w: usize, h: usize, settings: &Settings, results: Option<usiz
             "保存サイズの目安: 1 フレームあたり約 {}(ROI によらず画像全体の大きさで保存します)",
             fmt_bytes(one)
         ),
+    };
+    let ck = checkpoint_bytes(w, h, settings);
+    if ck > 0 {
+        note.push_str(&format!(
+            "。再開用データは解析中に最大 約 {}(書き込み中は一時的に 2 倍、完了後に削除)",
+            fmt_bytes(ck)
+        ));
     }
+    note
 }
 
 /// The ROI file the CLI reads, `{"polygon": [[x, y], ...]}`.
@@ -153,6 +197,8 @@ struct WorkerHooks<'a> {
     send: &'a mut dyn FnMut(Msg),
     roi: Option<Vec<bool>>,
     roi_size: (usize, usize),
+    /// The time series so far, kept with the checkpoints.
+    series: Vec<FrameStats>,
 }
 
 impl Hooks for WorkerHooks<'_> {
@@ -180,13 +226,45 @@ impl Hooks for WorkerHooks<'_> {
             self.roi_size = (f.w, f.h);
         }
         let stats = frame_stats(k, &f, self.roi.as_deref());
+        self.series.push(stats.clone());
         (self.send)(Msg::Frame { stats });
     }
 
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
+
+    fn checkpoint_extra(&self) -> Vec<u8> {
+        resume::encode_stats(&self.series)
+    }
+
+    fn checkpoint_saved(&mut self, info: &SaveInfo) {
+        (self.send)(Msg::Saved(*info));
+    }
 }
+
+/// Whether the checkpoint in `spec.out` can be continued by `spec`; the reason in Japanese if not.
+/// The results so far on success.
+fn check_resume(spec: &JobSpec) -> Result<Vec<FrameStats>, String> {
+    if spec.settings.crack {
+        return Err(CRACK_NO_RESUME.to_string());
+    }
+    let path = spec.out.join(checkpoint::FILE);
+    let found = checkpoint::summary(&path).map_err(|e| resume::describe_error(&e))?;
+    let now = resume::full_meta(spec, None).map_err(|e| messages::describe(&e))?;
+    let diff = resume::compare(&found.meta, &now);
+    if !diff.is_empty() {
+        let text: Vec<String> = diff.iter().map(resume::Mismatch::text).collect();
+        return Err(format!("再開できません。{}", text.join("")));
+    }
+    let extra = checkpoint::extra(&path).map_err(|e| resume::describe_error(&e))?;
+    let mut stats = resume::decode_stats(&extra);
+    stats.retain(|s| s.k <= found.head.k);
+    Ok(stats)
+}
+
+/// Why a crack run is not saved.
+pub const CRACK_NO_RESUME: &str = "亀裂モデルでは再開できません。";
 
 /// Runs `spec` on the calling thread, sending messages through `send`; the last one is
 /// `Finished`, `Cancelled` or `Failed`.
@@ -194,6 +272,20 @@ pub fn run_job(spec: &JobSpec, cancel: &AtomicBool, send: &mut dyn FnMut(Msg)) {
     send(Msg::Started {
         total: expected_results(spec),
     });
+    // before anything is written: a refused resume leaves the folder as it is
+    let mut series = vec![];
+    if spec.resume {
+        match check_resume(spec) {
+            Ok(stats) => {
+                series.clone_from(&stats);
+                send(Msg::Restored { stats });
+            }
+            Err(text) => {
+                send(Msg::Failed(text));
+                return;
+            }
+        }
+    }
     let prepare = || -> Result<()> {
         std::fs::create_dir_all(&spec.out)
             .with_context(|| format!("cannot create {}", spec.out.display()))?;
@@ -208,6 +300,15 @@ pub fn run_job(spec: &JobSpec, cancel: &AtomicBool, send: &mut dyn FnMut(Msg)) {
         send(Msg::Failed(messages::describe(&e)));
         return;
     }
+    let policy = spec.autosave.filter(|_| !spec.settings.crack);
+    let meta = match policy.map(|_| resume::full_meta(spec, expected_results(spec))) {
+        Some(Ok(m)) => Some(m),
+        Some(Err(e)) => {
+            send(Msg::Failed(messages::describe(&e)));
+            return;
+        }
+        None => None,
+    };
     let cli = cli_for(spec);
     let result = {
         let mut hooks = WorkerHooks {
@@ -216,13 +317,26 @@ pub fn run_job(spec: &JobSpec, cancel: &AtomicBool, send: &mut dyn FnMut(Msg)) {
             send: &mut *send,
             roi: None,
             roi_size: (0, 0),
+            series,
         };
-        run_with(&cli, &mut hooks)
+        match (policy, meta) {
+            (Some(policy), Some(meta)) => {
+                let mut ckpt = Checkpointing::new(spec.out.clone(), policy, meta, spec.resume);
+                run_checkpointed(&cli, &mut hooks, &mut ckpt)
+            }
+            _ => run_with(&cli, &mut hooks),
+        }
     };
     match result {
         Ok(()) => send(Msg::Finished),
         Err(e) if e.downcast_ref::<optflow_cli::run::Cancelled>().is_some() => send(Msg::Cancelled),
-        Err(e) => send(Msg::Failed(messages::describe(&e))),
+        Err(e) => {
+            let text = match e.downcast_ref::<optflow_core::checkpoint::CheckpointError>() {
+                Some(c) => resume::describe_error(c),
+                None => messages::describe(&e),
+            };
+            send(Msg::Failed(text));
+        }
     }
 }
 
@@ -343,6 +457,8 @@ mod tests {
             step: 1,
             settings: Settings::preset(Preset::Recommended),
             out: base.join("app"),
+            autosave: None,
+            resume: false,
         };
         let mut last = None;
         run_job(&spec, &AtomicBool::new(false), &mut |m| last = Some(m));
@@ -385,6 +501,8 @@ mod tests {
             step: 1,
             settings: Settings::preset(Preset::Standard),
             out: std::env::temp_dir().join(format!("optflow-app-fail-{}", std::process::id())),
+            autosave: None,
+            resume: false,
         };
         let mut msgs = vec![];
         run_job(&spec, &AtomicBool::new(false), &mut |m| msgs.push(m));

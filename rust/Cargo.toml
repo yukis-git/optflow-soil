@@ -9,7 +9,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 
 [workspace.package]
 edition = "2021"
-version = "0.1.0"
+version = "0.2.0"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 
 [profile.release]

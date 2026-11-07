@@ -13,11 +13,53 @@ use optflow_app::colormap::{color, Scale};
 use optflow_app::export::{self, Timing};
 use optflow_app::fields::Fields;
 use optflow_app::job::{self, JobSpec, Msg, Running};
+use optflow_app::resume::{self, Mismatch};
+use optflow_app::roi_edit::{self, Cursor, Drag, Handle};
 use optflow_app::settings::{Preset, Settings};
 use optflow_app::source::{Gray8, Source};
 use optflow_app::stats::{FrameStats, Overlay};
 use optflow_app::view::{self, ViewKey, ViewWorker};
 use optflow_app::{fonts, messages, power};
+use optflow_cli::checkpoint::{self, Policy, SaveInfo, Summary};
+
+/// How far from a ROI handle the pointer still takes it, in screen pixels at any zoom.
+const HANDLE_RADIUS: f32 = 9.0;
+
+/// A stopped run found in the output folder.
+struct Offer {
+    dir: PathBuf,
+    /// What it says, or why it cannot be used.
+    summary: Result<Summary, String>,
+    /// The input is not what it was (checked when the folder is looked at and again on resume).
+    input_changed: bool,
+}
+
+/// What the start button asks when a stopped run is there.
+#[derive(PartialEq)]
+enum Ask {
+    None,
+    FreshRun,
+}
+
+/// The scripted drive of the window (`--selftest-interactive`): real pointer events go through the
+/// same input path as a mouse's.
+#[derive(Default)]
+struct Script {
+    source: PathBuf,
+    out: PathBuf,
+    stage: usize,
+    wait: u32,
+    /// Input events still to send, one group per frame.
+    events: std::collections::VecDeque<Vec<egui::Event>>,
+    t0: Option<Instant>,
+    /// Frame at which to press stop.
+    stop_at: usize,
+    /// Quit after the stop, as a user closing the window.
+    quit_after_stop: bool,
+    /// Open the input with a stopped run in the folder: nothing is drawn, the run goes on.
+    reopen: bool,
+    checked_refusal: bool,
+}
 
 /// Test mode (`--selftest SOURCE "x,y;x,y;..." OUTDIR`): the window does what a user would do,
 /// driven by code instead of clicks, and saves screenshots of the window.
@@ -80,6 +122,33 @@ struct App {
     export_rx: Option<Receiver<Result<String, String>>>,
     ffmpeg_ok: bool,
     auto: Option<Auto>,
+    script: Option<Script>,
+    // ROI editing
+    roi_drag: Option<Drag>,
+    /// The ROI was drawn by a drag: a click no longer adds vertices.
+    roi_closed: bool,
+    /// Where the picture is on the screen, and the screen pixels per image pixel.
+    image_area: Option<(egui::Rect, f32)>,
+    // stop, autosave, resume
+    /// Minutes between autosaves; 0: only when stopped.
+    autosave_min: f64,
+    last_save: Option<(Instant, SaveInfo)>,
+    stop_asked: bool,
+    offer: Option<Offer>,
+    ask: Ask,
+    /// Results that were already there when this run began.
+    resumed_frames: usize,
+    // live view
+    /// Show each new result while the run goes on.
+    live: bool,
+    /// The shown frame follows the newest one.
+    follow: bool,
+    /// Where the buttons are, for the scripted drive.
+    btn_start: Option<egui::Rect>,
+    btn_stop: Option<egui::Rect>,
+    btn_resume: Option<egui::Rect>,
+    btn_restore: Option<egui::Rect>,
+    btn_ask_cancel: Option<egui::Rect>,
 }
 
 fn setup_fonts(ctx: &egui::Context) -> Option<PathBuf> {
@@ -95,7 +164,7 @@ fn setup_fonts(ctx: &egui::Context) -> Option<PathBuf> {
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, auto: Option<Auto>) -> App {
+    fn new(cc: &eframe::CreationContext<'_>, auto: Option<Auto>, script: Option<Script>) -> App {
         setup_fonts(&cc.egui_ctx);
         let base_out = std::env::current_dir()
             .ok()
@@ -142,6 +211,23 @@ impl App {
             export_rx: None,
             ffmpeg_ok: optflow_cli::video::tools_available(),
             auto,
+            script,
+            roi_drag: None,
+            roi_closed: false,
+            image_area: None,
+            autosave_min: 5.0,
+            last_save: None,
+            stop_asked: false,
+            offer: None,
+            ask: Ask::None,
+            resumed_frames: 0,
+            live: true,
+            follow: true,
+            btn_start: None,
+            btn_stop: None,
+            btn_resume: None,
+            btn_restore: None,
+            btn_ask_cancel: None,
         }
     }
 
@@ -167,25 +253,135 @@ impl App {
                     self.stop = 0;
                 }
                 self.roi.clear();
+                self.roi_closed = false;
+                self.roi_drag = None;
                 self.close_results();
-                match s.frame(self.start) {
-                    Ok(g) => {
-                        // the picture for ROI drawing; ROI coordinates stay in full-size pixels
-                        let factor = view::display_factor(g.w, g.h, max_texture_side(ctx));
-                        let (w, h, data) = view::shrink_gray(&g, factor);
-                        let img = egui::ColorImage::from_gray([w, h], &data);
-                        self.first_tex =
-                            Some(ctx.load_texture("first", img, egui::TextureOptions::LINEAR));
-                        self.first = Some(Arc::new(g));
-                        self.source = Some(s);
-                    }
-                    Err(e) => {
-                        self.error = Some(messages::describe(&e));
-                    }
+                if self.load_first_frame(ctx, &s) {
+                    self.source = Some(s);
+                    self.look_for_stopped_run(ctx, true);
                 }
             }
             Err(e) => self.error = Some(messages::describe(&e)),
         }
+    }
+
+    /// The picture for ROI drawing; ROI coordinates stay in full-size pixels.
+    fn load_first_frame(&mut self, ctx: &egui::Context, s: &Source) -> bool {
+        match s.frame(self.start) {
+            Ok(g) => {
+                let factor = view::display_factor(g.w, g.h, max_texture_side(ctx));
+                let (w, h, data) = view::shrink_gray(&g, factor);
+                let img = egui::ColorImage::from_gray([w, h], &data);
+                self.first_tex = Some(ctx.load_texture("first", img, egui::TextureOptions::LINEAR));
+                self.first = Some(Arc::new(g));
+                true
+            }
+            Err(e) => {
+                self.error = Some(messages::describe(&e));
+                false
+            }
+        }
+    }
+
+    /// Looks in the output folder for a stopped run and offers it. With `adopt`, and a ROI not yet
+    /// drawn, the window takes over the input, ROI, range and settings of that run, so that going
+    /// on takes one click; anything else stays, and the offer says what differs.
+    fn look_for_stopped_run(&mut self, ctx: &egui::Context, adopt: bool) {
+        let found = resume::find(&self.base_out);
+        // the one of this input first, else the newest
+        let of_this_input = |f: &resume::Found| {
+            let source = self.source.as_ref().map(|s| s.path.as_str());
+            f.summary
+                .as_ref()
+                .is_ok_and(|s| s.meta.get("source").is_some() && s.meta.get("source") == source)
+        };
+        let pick = found
+            .iter()
+            .position(of_this_input)
+            .or(if found.is_empty() { None } else { Some(0) });
+        self.offer = pick.and_then(|i| found.into_iter().nth(i)).map(|f| {
+            let input_changed = f.summary.as_ref().is_ok_and(|s| {
+                let (Some(src), Some(video)) = (s.meta.get("source"), s.meta.get("is_video"))
+                else {
+                    return true;
+                };
+                match resume::input_identity(src, video == "true") {
+                    Ok((n, d)) => {
+                        s.meta.get("input_files") != Some(n.to_string().as_str())
+                            || s.meta.get("input_digest") != Some(format!("{d:016x}").as_str())
+                    }
+                    Err(_) => true,
+                }
+            });
+            Offer {
+                dir: f.dir,
+                summary: f.summary,
+                input_changed,
+            }
+        });
+        if adopt && self.roi.is_empty() {
+            let usable = self
+                .offer
+                .as_ref()
+                .is_some_and(|o| o.summary.is_ok() && !o.input_changed);
+            if usable {
+                self.adopt_offer(ctx);
+            }
+        }
+    }
+
+    /// Brings the values of the offered run into the window.
+    fn adopt_offer(&mut self, ctx: &egui::Context) {
+        let Some(saved) = self
+            .offer
+            .as_ref()
+            .and_then(|o| o.summary.as_ref().ok())
+            .and_then(|s| resume::saved_values(&s.meta))
+        else {
+            return;
+        };
+        let same_input = self.source.as_ref().is_some_and(|s| s.path == saved.source);
+        let start_moved = self.start != saved.start;
+        if !same_input {
+            match Source::open(Path::new(&saved.source)) {
+                Ok(s) => {
+                    self.fps = s.fps;
+                    self.source = Some(s);
+                }
+                Err(e) => {
+                    self.error = Some(messages::describe(&e));
+                    return;
+                }
+            }
+        }
+        self.start = saved.start;
+        self.stop = saved.stop.unwrap_or(0);
+        self.step = saved.step;
+        self.settings = saved.settings;
+        self.roi = saved.roi;
+        self.roi_closed = self.roi.len() >= 3;
+        if !same_input || start_moved {
+            if let Some(s) = self.source.clone() {
+                self.load_first_frame(ctx, &s);
+            }
+        }
+        self.notice =
+            Some("中断した解析が見つかりました。ROI と設定を中断時のものにしました。".into());
+    }
+
+    /// How the offered run differs from what the window would run now.
+    fn offer_mismatches(&self) -> Vec<Mismatch> {
+        let (Some(o), Some(spec)) = (&self.offer, self.spec(None)) else {
+            return vec![];
+        };
+        let Ok(s) = &o.summary else {
+            return vec![];
+        };
+        let mut diff = resume::compare(&s.meta, &resume::plain_meta(&spec));
+        if o.input_changed && !diff.contains(&Mismatch::Input) {
+            diff.insert(0, Mismatch::Input);
+        }
+        diff
     }
 
     fn close_results(&mut self) {
@@ -198,9 +394,12 @@ impl App {
         self.view_done = None;
         self.warnings.clear();
         self.notice = None;
+        self.last_save = None;
+        self.resumed_frames = 0;
     }
 
-    fn spec(&self) -> Option<JobSpec> {
+    /// The run of what the window shows, into `out` or a new run folder.
+    fn spec(&self, out: Option<PathBuf>) -> Option<JobSpec> {
         let s = self.source.as_ref()?;
         Some(JobSpec {
             source: s.path.clone(),
@@ -211,13 +410,42 @@ impl App {
             stop: (self.stop > 0).then_some(self.stop),
             step: self.step.max(1),
             settings: self.settings.clone(),
-            out: job::next_run_dir(&self.base_out),
+            out: out.unwrap_or_else(|| job::next_run_dir(&self.base_out)),
+            autosave: Some(Policy {
+                interval_s: if self.autosave_min > 0.0 {
+                    self.autosave_min * 60.0
+                } else {
+                    f64::INFINITY
+                },
+                ..Policy::default()
+            }),
+            resume: false,
         })
     }
 
     fn start_run(&mut self, ctx: &egui::Context) {
-        let Some(spec) = self.spec() else { return };
+        let Some(spec) = self.spec(None) else { return };
+        self.launch(ctx, spec);
+    }
+
+    /// Continues the offered run.
+    fn resume_run(&mut self, ctx: &egui::Context) {
+        let Some(dir) = self.offer.as_ref().map(|o| o.dir.clone()) else {
+            return;
+        };
+        let Some(mut spec) = self.spec(Some(dir)) else {
+            return;
+        };
+        spec.resume = true;
+        self.launch(ctx, spec);
+    }
+
+    fn launch(&mut self, ctx: &egui::Context, spec: JobSpec) {
         self.close_results();
+        self.offer = None;
+        self.ask = Ask::None;
+        self.stop_asked = false;
+        self.follow = true;
         self.error = None;
         let (tx, rx) = channel();
         let c = ctx.clone();
@@ -235,23 +463,41 @@ impl App {
     }
 
     fn poll(&mut self) {
-        let Some(rx) = &self.rx else { return };
+        let Some(rx) = self.rx.take() else { return };
         let mut done = false;
+        let mut stopped = false;
         while let Ok(m) = rx.try_recv() {
             match m {
                 Msg::Started { total } => self.total = total,
                 Msg::Frame { stats } => {
-                    self.cur = self.series.len();
+                    if self.follow {
+                        self.cur = self.series.len();
+                    }
                     self.series.push(stats);
                 }
+                Msg::Restored { stats } => {
+                    self.resumed_frames = stats.len();
+                    self.series = stats;
+                    self.cur = self.series.len().saturating_sub(1);
+                }
+                Msg::Saved(info) => self.last_save = Some((Instant::now(), info)),
                 Msg::Warn(w) => self.warnings.push(w),
                 Msg::Finished => {
                     self.notice = Some("完了しました。".into());
                     done = true;
                 }
                 Msg::Cancelled => {
-                    self.notice =
-                        Some("中止しました(ここまでの結果は表示・書き出しできます)。".into());
+                    let crack = self.spec.as_ref().is_some_and(|s| s.settings.crack);
+                    self.notice = Some(if crack {
+                        format!(
+                            "中止しました(ここまでの結果は表示・書き出しできます)。{}",
+                            job::CRACK_NO_RESUME
+                        )
+                    } else {
+                        "中止しました。途中経過を保存したので、続きから再開できます(ここまでの結果は表示・書き出しもできます)。"
+                            .into()
+                    });
+                    stopped = true;
                     done = true;
                 }
                 Msg::Failed(t) => {
@@ -262,12 +508,32 @@ impl App {
         }
         if done {
             self.elapsed_final = self.t0.map_or(0.0, |t| t.elapsed().as_secs_f64());
-            self.rx = None;
             if let Some(r) = self.running.take() {
                 let _ = r.handle.join();
             }
-            self.cur = self.series.len().saturating_sub(1);
+            self.stop_asked = false;
+            if self.follow {
+                self.cur = self.series.len().saturating_sub(1);
+            }
+            if stopped || self.error.is_some() {
+                let dir = self.spec.as_ref().map(|s| s.out.clone());
+                self.offer_from(dir);
+            }
+        } else {
+            self.rx = Some(rx);
         }
+    }
+
+    /// Offers the checkpoint of `dir` if it has one.
+    fn offer_from(&mut self, dir: Option<PathBuf>) {
+        self.offer = dir.and_then(|dir| {
+            let path = dir.join(checkpoint::FILE);
+            path.is_file().then(|| Offer {
+                summary: checkpoint::summary(&path).map_err(|e| resume::describe_error(&e)),
+                dir,
+                input_changed: false,
+            })
+        });
     }
 
     fn timing(&self) -> Timing {
@@ -472,18 +738,38 @@ impl App {
                 );
                 ui.end_row();
             });
-            ui.label("画像上をクリックして ROI の頂点を追加します。");
+            ui.add(
+                egui::Label::new(
+                    "画像上をドラッグすると四角形の ROI を作ります(クリックで頂点を順に置くこともできます)。\
+                     作った後は角と辺の中央の点をドラッグして変更できます。\
+                     辺をダブルクリックで頂点を追加、頂点を右クリックで削除します。",
+                )
+                .wrap(),
+            );
             ui.horizontal(|ui| {
                 if ui.button("1点戻す").clicked() {
                     self.roi.pop();
+                    if self.roi.len() < 3 {
+                        self.roi_closed = false;
+                    }
                 }
                 if ui.button("ROIをクリア").clicked() {
                     self.roi.clear();
+                    self.roi_closed = false;
                 }
                 ui.label(format!("頂点 {}", self.roi.len()));
             });
             if self.roi.len() < 3 {
                 ui.label("ROI が 3 点未満の間は画像全体を追跡します。");
+            }
+            if roi_edit::self_intersects(&self.roi) {
+                ui.colored_label(
+                    Color32::from_rgb(200, 120, 0),
+                    "ROI の辺が交差しています(交差した部分は内外が交互になります)。",
+                );
+            }
+            if !self.series.is_empty() && ui.button("結果の表示を閉じて ROI を編集").clicked() {
+                self.close_results();
             }
         });
         ui.separator();
@@ -546,8 +832,16 @@ impl App {
                     ui.label("縮小率(整数)");
                     ui.add(egui::DragValue::new(&mut s.scale).range(1..=16));
                     ui.end_row();
+                    ui.label("自動保存の間隔 [分](0=中止時のみ)");
+                    ui.add(
+                        egui::DragValue::new(&mut self.autosave_min)
+                            .range(0.0..=1440.0)
+                            .speed(0.5),
+                    );
+                    ui.end_row();
                 });
                 ui.label("縮小率 2 以上では変位は縮小後の画素単位になります。");
+                ui.label("自動保存は実行時間の約 5 % を超えないように間隔を延ばします。結果には影響しません。");
             });
             // ---- CRACK TOGGLE ---------------------------------------------------------------
             ui.checkbox(&mut self.settings.crack, "亀裂モデル（試験的）");
@@ -574,28 +868,59 @@ impl App {
                 if let Some(p) = rfd::FileDialog::new().pick_folder() {
                     self.base_out = p;
                     self.out_picked = true;
+                    self.look_for_stopped_run(ctx, true);
                 }
             }
         });
         if let Some(text) = self.output_estimate() {
             ui.add(egui::Label::new(text).wrap());
         }
+        if !busy {
+            self.resume_card(ui, ctx);
+        }
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    !busy && self.source.is_some(),
-                    egui::Button::new(RichText::new("▶ 解析開始").strong()),
-                )
-                .clicked()
-            {
-                self.start_run(ctx);
+            let start = ui.add_enabled(
+                !busy && self.source.is_some(),
+                egui::Button::new(RichText::new("▶ 解析開始").strong()),
+            );
+            self.btn_start = Some(start.rect);
+            if start.clicked() {
+                if self.offer.as_ref().is_some_and(|o| o.summary.is_ok()) {
+                    self.ask = Ask::FreshRun;
+                } else {
+                    self.start_run(ctx);
+                }
             }
-            if ui.add_enabled(busy, egui::Button::new("■ 中止")).clicked() {
+            let stop = ui.add_enabled(busy && !self.stop_asked, egui::Button::new("■ 中止"));
+            self.btn_stop = Some(stop.rect);
+            if stop.clicked() {
                 if let Some(r) = &self.running {
                     r.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
+                self.stop_asked = true;
             }
         });
+        if self.stop_asked {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("現在のフレームが終わり次第、途中経過を保存して止まります…");
+            });
+        }
+        if let Some((at, info)) = &self.last_save {
+            ui.label(format!(
+                "最終保存: {} 前(フレーム {} まで、{}、{:.1} 秒)",
+                fmt_secs(at.elapsed().as_secs_f64()),
+                info.k,
+                job::fmt_bytes(info.bytes),
+                info.secs
+            ));
+        } else if busy {
+            if self.settings.crack {
+                ui.label(job::CRACK_NO_RESUME);
+            } else {
+                ui.label("最終保存: まだありません");
+            }
+        }
         if busy {
             let done = self.series.len();
             let el = self.t0.map_or(0.0, |t| t.elapsed().as_secs_f64());
@@ -605,8 +930,9 @@ impl App {
                         egui::ProgressBar::new((done as f32 / n as f32).min(1.0))
                             .text(format!("{done} / {n} フレーム")),
                     );
-                    let eta = if done > 0 {
-                        el / done as f64 * (n - done.min(n)) as f64
+                    let new = done.saturating_sub(self.resumed_frames);
+                    let eta = if new > 0 {
+                        el / new as f64 * (n - done.min(n)) as f64
                     } else {
                         f64::NAN
                     };
@@ -666,6 +992,106 @@ impl App {
         }
     }
 
+    /// The offer of a stopped run in the output folder.
+    fn resume_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(o) = &self.offer else { return };
+        let name = o
+            .dir
+            .file_name()
+            .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        let mut go = false;
+        let mut restore = false;
+        let diff = self.offer_mismatches();
+        let summary = match &o.summary {
+            Ok(s) => Some((s.head.k, s.meta.get("total").map(str::to_string), s.bytes)),
+            Err(e) => {
+                ui.colored_label(
+                    Color32::from_rgb(210, 40, 40),
+                    format!("{name}: {e}(データは消していません。新しく解析できます。)"),
+                );
+                None
+            }
+        };
+        if let Some((k, total, bytes)) = summary {
+            ui.group(|ui| {
+                let of = total
+                    .filter(|t| t != "-")
+                    .map_or(String::new(), |t| format!(" / {t}"));
+                ui.label(format!(
+                    "中断した解析があります: {name}(フレーム {k}{of} まで、{})",
+                    job::fmt_bytes(bytes)
+                ));
+                let can = diff.is_empty();
+                let b = ui.add_enabled(can, egui::Button::new(RichText::new("▶ 再開").strong()));
+                self.btn_resume = Some(b.rect);
+                go = b.clicked();
+                if !can {
+                    for d in &diff {
+                        ui.colored_label(Color32::from_rgb(210, 40, 40), d.text());
+                    }
+                    ui.label("このままでは再開できません。データは消していません。「解析開始」で新しく解析できます。");
+                    if diff.iter().all(Mismatch::restorable) {
+                        let b = ui.button("ROI と設定を中断時のものに戻す");
+                        self.btn_restore = Some(b.rect);
+                        restore = b.clicked();
+                    }
+                }
+            });
+        }
+        if restore {
+            self.adopt_offer(ctx);
+        }
+        if go {
+            self.resume_run(ctx);
+        }
+    }
+
+    /// The question of the start button when a stopped run is there.
+    fn ask_window(&mut self, ctx: &egui::Context) {
+        if self.ask != Ask::FreshRun {
+            return;
+        }
+        let name = self
+            .offer
+            .as_ref()
+            .and_then(|o| o.dir.file_name())
+            .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        let can_resume = self.offer_mismatches().is_empty();
+        let next = job::next_run_dir(&self.base_out);
+        let next = next
+            .file_name()
+            .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        let mut choice = None;
+        egui::Window::new("解析の開始")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "このフォルダには中断した解析 {name} があります。\n新しいフォルダ {next} に最初から解析しますか?既存の結果は消しません。"
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button("最初から解析").clicked() {
+                        choice = Some(0);
+                    }
+                    if ui.add_enabled(can_resume, egui::Button::new("続きから再開")).clicked() {
+                        choice = Some(1);
+                    }
+                    let cancel = ui.button("やめる");
+                    self.btn_ask_cancel = Some(cancel.rect);
+                    if cancel.clicked() {
+                        choice = Some(2);
+                    }
+                });
+            });
+        match choice {
+            Some(0) => self.start_run(ctx),
+            Some(1) => self.resume_run(ctx),
+            Some(_) => self.ask = Ask::None,
+            None => {}
+        }
+    }
+
     /// The size note beside the start button: the maps are written at the full image size, so a
     /// long run on large photos fills a disk whatever the ROI.
     fn output_estimate(&self) -> Option<String> {
@@ -691,8 +1117,10 @@ impl App {
             .min((avail.y - 24.0).max(50.0) / ih)
             .max(0.05);
         let size = egui::vec2(iw * s, ih * s);
-        let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+        let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+        self.image_area = Some((rect, s));
         let painter = ui.painter_at(rect);
+        let first_size = (first.w, first.h);
         let tex = if self.run_dir.is_some() && self.tex.is_some() {
             self.tex.as_ref()
         } else {
@@ -709,13 +1137,72 @@ impl App {
         let to_screen = |p: (f64, f64)| rect.min + egui::vec2(p.0 as f32 * s, p.1 as f32 * s);
         let editing = self.running.is_none() && self.run_dir.is_none()
             || self.series.is_empty() && self.running.is_none();
-        if editing && resp.clicked() {
-            if let Some(pos) = resp.interact_pointer_pos() {
-                let v = (pos - rect.min) / s;
-                self.roi.push((
-                    v.x.clamp(0.0, iw - 1.0) as f64,
-                    v.y.clamp(0.0, ih - 1.0) as f64,
-                ));
+        let radius = f64::from(HANDLE_RADIUS / s);
+        let to_image = |pos: egui::Pos2| {
+            let v = (pos - rect.min) / s;
+            (f64::from(v.x), f64::from(v.y))
+        };
+        let mut hover_handle = None;
+        if editing {
+            hover_handle = resp
+                .hover_pos()
+                .and_then(|p| roi_edit::hit_test(&self.roi, to_image(p), radius));
+            if resp.drag_started_by(egui::PointerButton::Primary) {
+                let origin = ui.ctx().input(|i| i.pointer.press_origin());
+                if let Some(o) = origin {
+                    self.roi_drag = roi_edit::begin_drag(&self.roi, to_image(o), radius);
+                }
+            }
+            if let (Some(d), true) = (self.roi_drag, resp.dragged_by(egui::PointerButton::Primary))
+            {
+                if let Some(pos) = resp.interact_pointer_pos() {
+                    roi_edit::apply(&mut self.roi, d, to_image(pos), first_size);
+                }
+            }
+            if let (Some(d), true) = (self.roi_drag, resp.drag_stopped()) {
+                roi_edit::finish(&mut self.roi, d);
+                self.roi_closed = self.roi.len() >= 3 || self.roi_closed;
+                self.roi_drag = None;
+            }
+            let at = resp.interact_pointer_pos().map(to_image);
+            if let (true, Some(p)) = (resp.double_clicked(), at) {
+                if roi_edit::hit_test(&self.roi, p, radius).is_none() {
+                    if let Some(i) = roi_edit::near_edge(&self.roi, p, radius) {
+                        roi_edit::insert_on_edge(&mut self.roi, i, p, first_size);
+                    }
+                }
+            } else if let (true, Some(p)) = (resp.clicked(), at) {
+                // a click near what is there is for that; away from it, it places the next vertex
+                // of a polygon being drawn point by point
+                if !self.roi_closed
+                    && roi_edit::hit_test(&self.roi, p, radius).is_none()
+                    && roi_edit::near_edge(&self.roi, p, radius).is_none()
+                {
+                    self.roi.push(roi_edit::clamp(p, first_size));
+                }
+            }
+            if let (true, Some(p)) = (resp.secondary_clicked(), at) {
+                if let Some(Handle::Vertex(i)) = roi_edit::hit_test(&self.roi, p, radius) {
+                    roi_edit::delete_vertex(&mut self.roi, i);
+                }
+            }
+            let icon = match (&self.roi_drag, hover_handle) {
+                (Some(Drag::NewRect { .. }), _) => Some(egui::CursorIcon::Crosshair),
+                (Some(_), _) => Some(egui::CursorIcon::Grabbing),
+                (None, Some(h)) => Some(match roi_edit::cursor(&self.roi, h) {
+                    Cursor::Grab => egui::CursorIcon::Grab,
+                    Cursor::ResizeHorizontal => egui::CursorIcon::ResizeHorizontal,
+                    Cursor::ResizeVertical => egui::CursorIcon::ResizeVertical,
+                    Cursor::ResizeNeSw => egui::CursorIcon::ResizeNeSw,
+                    Cursor::ResizeNwSe => egui::CursorIcon::ResizeNwSe,
+                }),
+                (None, None) if self.roi.is_empty() && resp.hovered() => {
+                    Some(egui::CursorIcon::Crosshair)
+                }
+                _ => None,
+            };
+            if let Some(icon) = icon {
+                ui.ctx().set_cursor_icon(icon);
             }
         }
         let pts: Vec<egui::Pos2> = self.roi.iter().map(|&p| to_screen(p)).collect();
@@ -726,8 +1213,38 @@ impl App {
         if pts.len() >= 3 {
             painter.line_segment([pts[pts.len() - 1], pts[0]], stroke);
         }
-        for p in &pts {
-            painter.circle_filled(*p, 3.5, Color32::from_rgb(255, 80, 0));
+        for (i, p) in pts.iter().enumerate() {
+            let on = hover_handle == Some(Handle::Vertex(i));
+            painter.circle_filled(
+                *p,
+                if on { 6.0 } else { 4.5 },
+                Color32::from_rgb(255, 80, 0),
+            );
+            if editing {
+                painter.circle_stroke(
+                    *p,
+                    if on { 6.0 } else { 4.5 },
+                    Stroke::new(1.0, Color32::WHITE),
+                );
+            }
+        }
+        if editing {
+            for i in 0..roi_edit::edge_count(&self.roi) {
+                let m = to_screen(roi_edit::midpoint(&self.roi, i));
+                let half = if hover_handle == Some(Handle::Edge(i)) {
+                    5.0
+                } else {
+                    3.5
+                };
+                let r = egui::Rect::from_center_size(m, egui::vec2(2.0 * half, 2.0 * half));
+                painter.rect_filled(r, 0.0, Color32::from_rgb(255, 220, 0));
+                painter.rect_stroke(
+                    r,
+                    0.0,
+                    Stroke::new(1.0, Color32::BLACK),
+                    egui::StrokeKind::Outside,
+                );
+            }
         }
         if let (Some(c), true) = (&self.crack, self.run_dir.is_some()) {
             for (set, col) in [
@@ -743,7 +1260,11 @@ impl App {
             }
         }
         if editing {
-            ui.label("クリックで ROI の頂点を追加");
+            ui.label(if self.roi.is_empty() {
+                "ドラッグで ROI を作成"
+            } else {
+                "角・辺の点をドラッグで変更 / 辺をダブルクリックで頂点追加 / 頂点を右クリックで削除"
+            });
         }
     }
 
@@ -783,6 +1304,17 @@ impl App {
                 .changed()
             {
                 self.cur = c;
+                self.follow = false;
+            }
+            if self.running.is_some() {
+                let mut on = self.live && self.follow;
+                if ui.checkbox(&mut on, "最新を表示").changed() {
+                    self.live = on;
+                    self.follow = on;
+                    if on {
+                        self.cur = n - 1;
+                    }
+                }
             }
             ui.label(format!(
                 "第{}結果 / ソース {} 枚目 / {:.2} 秒",
@@ -1037,6 +1569,381 @@ impl App {
     }
 }
 
+/// The events of a drag: one group per frame, so the interface sees it as a person's.
+fn drag_events(
+    from: egui::Pos2,
+    to: egui::Pos2,
+    button: egui::PointerButton,
+) -> Vec<Vec<egui::Event>> {
+    let press = |pressed, pos| egui::Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut v = vec![
+        vec![egui::Event::PointerMoved(from)],
+        vec![press(true, from)],
+    ];
+    for i in 1..=12 {
+        let p = from + (to - from) * (i as f32 / 12.0);
+        v.push(vec![egui::Event::PointerMoved(p)]);
+    }
+    v.push(vec![press(false, to)]);
+    v.push(vec![]);
+    v
+}
+
+fn click_events(
+    pos: egui::Pos2,
+    button: egui::PointerButton,
+    times: usize,
+) -> Vec<Vec<egui::Event>> {
+    let press = |pressed| egui::Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut v = vec![vec![egui::Event::PointerMoved(pos)], vec![]];
+    for _ in 0..times {
+        v.push(vec![press(true)]);
+        v.push(vec![press(false)]);
+    }
+    v.push(vec![]);
+    v
+}
+
+impl App {
+    fn screenshot(ctx: &egui::Context, out: &Path, name: &str) {
+        let path = out.join(format!("{name}.png"));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+            egui::ScreenshotCallback::new(move |img| {
+                let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
+                if let Some(im) =
+                    image::RgbaImage::from_raw(img.width() as u32, img.height() as u32, rgba)
+                {
+                    let _ = im.save(&path);
+                    eprintln!("script: saved {}", path.display());
+                }
+            }),
+        ));
+    }
+
+    /// One step of the scripted drive of the window (see [`Script`]). Every action on the ROI and
+    /// every button press is a pointer event through egui.
+    fn script_step(&mut self, ctx: &egui::Context) {
+        let Some(mut s) = self.script.take() else {
+            return;
+        };
+        ctx.request_repaint_after(std::time::Duration::from_millis(30));
+        let t0 = *s.t0.get_or_insert_with(Instant::now);
+        if s.wait > 0 || !s.events.is_empty() {
+            s.wait = s.wait.saturating_sub(1);
+            self.script = Some(s);
+            return;
+        }
+        let at = |app: &App, x: f64, y: f64| {
+            let (rect, zoom) = app.image_area.expect("the picture is on the screen");
+            rect.min + egui::vec2(x as f32 * zoom, y as f32 * zoom)
+        };
+        let primary = egui::PointerButton::Primary;
+        let log = |app: &App, what: &str| {
+            eprintln!(
+                "script: {what}: roi {:?} frames {} at {:.1} s",
+                app.roi,
+                app.series.len(),
+                t0.elapsed().as_secs_f64()
+            );
+        };
+        match s.stage {
+            0 if s.reopen => {
+                self.base_out = s.out.join("optflow_出力");
+                self.out_picked = true;
+                let r = Source::open(&s.source).map(|src| (src, None));
+                self.set_source(ctx, r);
+                log(self, "opened again");
+                eprintln!("script: notice {:?}", self.notice);
+                assert!(self.offer.is_some(), "the stopped run is offered");
+                assert!(self.roi.len() >= 3, "its ROI came back");
+                s.wait = 10;
+                s.stage = 18;
+            }
+            0 => {
+                self.base_out = s.out.join("optflow_出力");
+                self.out_picked = true;
+                let r = Source::open(&s.source).map(|src| (src, None));
+                self.set_source(ctx, r);
+                self.settings = optflow_app::settings::Settings::preset(
+                    optflow_app::settings::Preset::Recommended,
+                );
+                s.wait = 10;
+                s.stage = 1;
+            }
+            1 => {
+                Self::screenshot(ctx, &s.out, "01_opened");
+                s.wait = 8;
+                s.stage = 2;
+            }
+            2 => {
+                let first = self.first.clone().expect("a source is open");
+                let (w, h) = (first.w as f64, first.h as f64);
+                s.events.extend(drag_events(
+                    at(self, 0.2 * w, 0.2 * h),
+                    at(self, 0.8 * w, 0.8 * h),
+                    primary,
+                ));
+                s.stage = 3;
+                s.wait = 3;
+            }
+            3 => {
+                log(self, "after the drag on the empty picture");
+                assert_eq!(self.roi.len(), 4, "the drag made a rectangle");
+                Self::screenshot(ctx, &s.out, "02_rect");
+                s.wait = 8;
+                s.stage = 4;
+            }
+            4 => {
+                let c = self.roi[2];
+                let first = self.first.clone().expect("a source is open");
+                let (dx, dy) = (0.08 * first.w as f64, 0.06 * first.h as f64);
+                s.events.extend(drag_events(
+                    at(self, c.0, c.1),
+                    at(self, c.0 + dx, c.1 + dy),
+                    primary,
+                ));
+                s.stage = 5;
+                s.wait = 3;
+            }
+            5 => {
+                log(self, "after the corner drag");
+                Self::screenshot(ctx, &s.out, "03_corner");
+                s.wait = 8;
+                s.stage = 6;
+            }
+            6 => {
+                let m = roi_edit::midpoint(&self.roi, 0);
+                let first = self.first.clone().expect("a source is open");
+                s.events.extend(drag_events(
+                    at(self, m.0, m.1),
+                    at(self, m.0 + 40.0, m.1 - 0.1 * first.h as f64),
+                    primary,
+                ));
+                s.stage = 7;
+                s.wait = 3;
+            }
+            7 => {
+                log(self, "after the edge drag");
+                assert_eq!(self.roi[0].1, self.roi[1].1, "the top edge stayed level");
+                Self::screenshot(ctx, &s.out, "04_edge");
+                s.wait = 8;
+                s.stage = 8;
+            }
+            8 => {
+                // a double click at a quarter of the left edge inserts a vertex
+                let (a, b) = (self.roi[3], self.roi[0]);
+                let p = (a.0 + 0.25 * (b.0 - a.0), a.1 + 0.25 * (b.1 - a.1));
+                s.events
+                    .extend(click_events(at(self, p.0, p.1), primary, 2));
+                s.stage = 9;
+                s.wait = 3;
+            }
+            9 => {
+                log(self, "after the double click on an edge");
+                assert_eq!(self.roi.len(), 5, "the double click inserted a vertex");
+                Self::screenshot(ctx, &s.out, "05_inserted");
+                s.wait = 8;
+                s.stage = 10;
+            }
+            10 => {
+                let p = self.roi[4];
+                s.events.extend(click_events(
+                    at(self, p.0, p.1),
+                    egui::PointerButton::Secondary,
+                    1,
+                ));
+                s.stage = 11;
+                s.wait = 3;
+            }
+            11 => {
+                log(self, "after the right click on a vertex");
+                assert_eq!(self.roi.len(), 4, "the right click removed it");
+                // a press inside, away from any handle, moves nothing
+                let before = self.roi.clone();
+                let c = (
+                    (before[0].0 + before[2].0) / 2.0,
+                    (before[0].1 + before[2].1) / 2.0,
+                );
+                s.events.extend(drag_events(
+                    at(self, c.0, c.1),
+                    at(self, c.0 + 30.0, c.1 + 30.0),
+                    primary,
+                ));
+                s.stage = 12;
+                s.wait = 3;
+            }
+            12 => {
+                log(self, "after a drag inside");
+                let start = self.btn_start.expect("the start button is on the screen");
+                s.events.extend(click_events(start.center(), primary, 1));
+                s.stage = 13;
+                s.wait = 3;
+            }
+            13 => {
+                if self.running.is_some()
+                    && !self.series.is_empty()
+                    && !self.view_busy()
+                    && self.tex.is_some()
+                {
+                    log(self, "the live map is up");
+                    Self::screenshot(ctx, &s.out, "06_live_gmax");
+                    s.wait = 8;
+                    s.stage = 14;
+                }
+            }
+            14 => {
+                self.overlay = Overlay::Ux;
+                s.wait = 10;
+                s.stage = 15;
+            }
+            15 => {
+                if !self.view_busy() {
+                    Self::screenshot(ctx, &s.out, "07_live_ux");
+                    s.wait = 8;
+                    s.stage = 16;
+                }
+            }
+            16 => {
+                if self.series.len() >= s.stop_at {
+                    let stop = self.btn_stop.expect("the stop button is on the screen");
+                    log(self, "pressing stop");
+                    s.events.extend(click_events(stop.center(), primary, 1));
+                    s.stage = 17;
+                    s.wait = 3;
+                }
+            }
+            17 => {
+                if self.running.is_none() {
+                    log(self, "stopped");
+                    s.wait = 10;
+                    s.stage = if s.quit_after_stop { 23 } else { 18 };
+                }
+            }
+            18 => {
+                if !self.view_busy() {
+                    eprintln!(
+                        "script: notice {:?}; last save {:?}",
+                        self.notice,
+                        self.last_save.as_ref().map(|l| l.1)
+                    );
+                    let name = if s.reopen {
+                        "10_reopened"
+                    } else {
+                        "08_stopped"
+                    };
+                    Self::screenshot(ctx, &s.out, name);
+                    s.wait = 8;
+                    s.stage = 19;
+                }
+            }
+            // opened again: first what is refused, what asks, and the way back
+            19 if s.reopen && !s.checked_refusal => {
+                let c = self.roi[2];
+                s.events.extend(drag_events(
+                    at(self, c.0, c.1),
+                    at(self, c.0 - 90.0, c.1),
+                    primary,
+                ));
+                s.checked_refusal = true;
+                s.stage = 100;
+                s.wait = 3;
+            }
+            100 => {
+                let diff = self.offer_mismatches();
+                eprintln!("script: the ROI moved, the offer says {diff:?}");
+                assert_eq!(diff, vec![Mismatch::Roi], "a moved ROI is refused");
+                Self::screenshot(ctx, &s.out, "12_refused");
+                s.wait = 8;
+                s.stage = 101;
+            }
+            101 => {
+                let b = self.btn_start.expect("the start button is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.stage = 102;
+                s.wait = 6;
+            }
+            102 => {
+                assert!(self.ask == Ask::FreshRun, "a fresh run asks first");
+                assert!(self.running.is_none());
+                Self::screenshot(ctx, &s.out, "13_asks_first");
+                s.wait = 8;
+                s.stage = 103;
+            }
+            103 => {
+                let b = self.btn_ask_cancel.expect("the question is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.stage = 104;
+                s.wait = 6;
+            }
+            104 => {
+                assert!(self.ask == Ask::None && self.running.is_none());
+                let b = self.btn_restore.expect("the way back is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.stage = 105;
+                s.wait = 6;
+            }
+            105 => {
+                assert!(self.offer_mismatches().is_empty(), "the values came back");
+                log(self, "back to the values of the stopped run");
+                s.wait = 6;
+                s.stage = 19;
+            }
+            19 => {
+                assert!(self.offer.is_some(), "stopped: the run is offered");
+                let b = self.btn_resume.expect("the resume button is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.stage = 20;
+                s.wait = 3;
+            }
+            20 => {
+                if self.running.is_some() {
+                    log(self, "resumed");
+                    s.stage = 21;
+                }
+            }
+            21 => {
+                if self.running.is_none() {
+                    log(self, "finished");
+                    eprintln!("script: error {:?}; notice {:?}", self.error, self.notice);
+                    s.wait = 10;
+                    s.stage = 22;
+                }
+            }
+            22 => {
+                if !self.view_busy() {
+                    let name = if s.reopen {
+                        "11_reopened_finished"
+                    } else {
+                        "09_finished"
+                    };
+                    Self::screenshot(ctx, &s.out, name);
+                    s.wait = 10;
+                    s.stage = 23;
+                }
+            }
+            _ => {
+                eprintln!(
+                    "script: done at {:.1} s; run folder {:?}",
+                    t0.elapsed().as_secs_f64(),
+                    self.run_dir
+                );
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+        self.script = Some(s);
+    }
+}
+
 /// The full-size PNG of a view (the export; never reduced).
 #[allow(clippy::too_many_arguments)]
 fn write_png(
@@ -1103,9 +2010,20 @@ impl eframe::App for App {
         if self.auto.is_some() {
             self.auto_step(ctx);
         }
-        if self.running.is_none() {
+        self.script_step(ctx);
+        // while a run goes on the picture is made on the view thread and the newest request wins, so
+        // frames are skipped when it lags; the tracker never waits for it
+        if self.running.is_none() || self.live {
             self.cur = self.cur.min(self.series.len().saturating_sub(1));
             self.refresh_view(ctx);
+        }
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(s) = &mut self.script {
+            if let Some(ev) = s.events.pop_front() {
+                raw.events.extend(ev);
+            }
         }
     }
 
@@ -1124,6 +2042,7 @@ impl eframe::App for App {
                 egui::ScrollArea::vertical().show(ui, |ui| self.results_panel(ui, &ctx));
             });
         egui::CentralPanel::default().show(ui, |ui| self.image_panel(ui));
+        self.ask_window(&ctx);
     }
 }
 
@@ -1174,6 +2093,22 @@ fn main() -> eframe::Result<()> {
         }
         _ => None,
     };
+    let script = match args.as_slice() {
+        [flag, src, out, stop_at, rest @ ..] if flag == "--selftest-interactive" => {
+            let out = PathBuf::from(out);
+            let _ = std::fs::create_dir_all(&out);
+            Some(Script {
+                source: PathBuf::from(src),
+                out,
+                wait: 5,
+                stop_at: stop_at.parse().unwrap_or(2),
+                quit_after_stop: rest.iter().any(|a| a == "quit"),
+                reopen: rest.iter().any(|a| a == "reopen"),
+                ..Script::default()
+            })
+        }
+        _ => None,
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 840.0])
@@ -1183,7 +2118,7 @@ fn main() -> eframe::Result<()> {
     let result = eframe::run_native(
         "optflow-app",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, auto)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, auto, script)))),
     );
     if let Err(e) = &result {
         // a window that cannot be opened (typically no OpenGL 2.0 driver) must not vanish silently

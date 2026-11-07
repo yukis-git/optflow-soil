@@ -10,11 +10,11 @@ use anyhow::{anyhow, bail, Context, Result};
 use optflow_core::engine::{CpuEngine, FineEngine};
 use optflow_core::image::Image;
 use optflow_core::poc::capture_range;
-use optflow_core::track::{
-    track_pair_owned_with, track_sequence_with, StrainOpts, Timing, TrackError, TrackResult,
-};
+use optflow_core::track::resume::{resumable_sequence, SavedRun};
+use optflow_core::track::{track_pair_owned_with, StrainOpts, Timing, TrackError, TrackResult};
 
 use crate::args::{Cli, Command, CropMode, Device};
+use crate::checkpoint::{self, Checkpointing, SaveInfo};
 use crate::crop::{self, Crop};
 use crate::io;
 use crate::mask;
@@ -231,6 +231,12 @@ pub trait Hooks {
     fn cancelled(&self) -> bool {
         false
     }
+    /// Bytes to keep with a checkpoint about to be written.
+    fn checkpoint_extra(&self) -> Vec<u8> {
+        Vec::new()
+    }
+    /// A checkpoint was written.
+    fn checkpoint_saved(&mut self, _info: &SaveInfo) {}
 }
 
 /// The hooks of the command line: stdout, stderr, never cancelled.
@@ -257,6 +263,16 @@ pub fn run(cli: &Cli) -> Result<()> {
 
 /// [`run`] with `hooks` in place of stdout, stderr and the stop condition of the command line.
 pub fn run_with(cli: &Cli, hooks: &mut dyn Hooks) -> Result<()> {
+    run_inner(cli, hooks, None)
+}
+
+/// [`run_with`] that saves checkpoints as `ckpt` says and, if it says so, continues from one. A
+/// `pair` command has nothing to save and runs as usual.
+pub fn run_checkpointed(cli: &Cli, hooks: &mut dyn Hooks, ckpt: &mut Checkpointing) -> Result<()> {
+    run_inner(cli, hooks, Some(ckpt))
+}
+
+fn run_inner(cli: &Cli, hooks: &mut dyn Hooks, ckpt: Option<&mut Checkpointing>) -> Result<()> {
     let cfg = settings::config(cli.config.as_deref(), &cli.set)?;
     if cli.roi.is_some() && cli.mask.is_some() {
         bail!("--roi and --mask are mutually exclusive");
@@ -320,7 +336,15 @@ pub fn run_with(cli: &Cli, hooks: &mut dyn Hooks) -> Result<()> {
             start,
             stop,
             step,
-        } => run_seq(cli, &*engine, &cfg, frames, *start, *stop, *step, hooks),
+        } => run_seq(
+            cli,
+            &*engine,
+            &cfg,
+            frames,
+            (*start, *stop, *step),
+            hooks,
+            ckpt,
+        ),
     }
 }
 
@@ -426,52 +450,113 @@ impl<I: Iterator<Item = Frame>> Iterator for Frames<I> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// A saved state with its reference and previous frames, cut to the crop.
+type Restored = (SavedRun, Image<f32>, Image<f32>);
+
+/// What a sequence begins with: the full size, the crop, the ROI of what is tracked, the warning to
+/// give after the first frame, the frames to track, and the state to continue.
+type Opened = (
+    usize,
+    usize,
+    Option<Crop>,
+    Option<Image<bool>>,
+    Option<String>,
+    Box<dyn Iterator<Item = Image<f32>>>,
+    Option<Restored>,
+);
+
 fn run_seq(
     cli: &Cli,
     engine: &dyn FineEngine,
     cfg: &optflow_core::config::Config,
     source: &str,
-    start: i64,
-    stop: Option<i64>,
-    step: i64,
+    (start, stop, step): (i64, Option<i64>, i64),
     hooks: &mut dyn Hooks,
+    mut ckpt: Option<&mut Checkpointing>,
 ) -> Result<()> {
-    let mut stream = frames(cli, cfg, source, start, stop, step)?;
-    let Some(first) = stream.next() else {
-        bail!("no frames to track in {source} (check --start, --stop and --step)");
-    };
-    let first = first?;
-    let Some(second) = stream.next() else {
-        bail!("need at least two frames to track, got 1");
-    };
-    let second = second?;
-    let (w, h) = (first.w, first.h);
-    let mask = region(cli, w, h)?;
-    let crop = plan_crop(cli, cfg, mask.as_ref(), true)?;
-    let cmask = cut_mask(crop.as_ref(), mask);
-    if crop.is_some() && (second.w, second.h) != (w, h) {
-        // what track_sequence reports for it, with the sizes of the whole frames
-        bail!(TrackError::FrameShape {
-            k: 1,
-            got: (second.h, second.w),
-            expected: (h, w)
-        });
-    }
     let failure = Rc::new(RefCell::new(None));
-    let first = cut(crop.as_ref(), first);
-    let mut note = capture_warning(cfg, first.h, first.w);
-    let chain = std::iter::once(first)
-        .chain(std::iter::once(cut(crop.as_ref(), second)))
-        .chain(Frames {
+    let resume = ckpt
+        .as_deref()
+        .filter(|c| c.resume)
+        .map(Checkpointing::path);
+    let (w, h, crop, cmask, mut note, chain, restored): Opened = if let Some(path) = resume {
+        // frames are functions of their index: the stream starts over at the previous frame
+        let head = checkpoint::summary(&path)?.head;
+        let at = |i: usize| start + step * i as i64;
+        let mut stream = frames(cli, cfg, source, at(head.k), stop, step)?;
+        let Some(prev) = stream.next() else {
+            bail!(optflow_core::checkpoint::CheckpointError::Mismatch(
+                "the input has fewer frames than the checkpoint"
+            ));
+        };
+        let prev = prev?;
+        let (w, h) = (prev.w, prev.h);
+        let mask = region(cli, w, h)?;
+        let crop = plan_crop(cli, cfg, mask.as_ref(), true)?;
+        let cmask = cut_mask(crop.as_ref(), mask);
+        let one = at(head.ref_idx);
+        let reference = frames(cli, cfg, source, one, Some(one + 1), step)?.next();
+        let Some(reference) = reference else {
+            bail!(optflow_core::checkpoint::CheckpointError::Mismatch(
+                "the input has fewer frames than the checkpoint"
+            ));
+        };
+        let saved = checkpoint::state(&path)?;
+        let restored = (
+            saved,
+            cut(crop.as_ref(), reference?),
+            cut(crop.as_ref(), prev),
+        );
+        let note = capture_warning(cfg, restored.1.h, restored.1.w);
+        let chain = Frames {
             inner: stream,
             failure: Rc::clone(&failure),
             crop,
             size: (w, h),
-            index: 2,
-        });
+            index: head.k + 1,
+        };
+        if let Some(c) = ckpt.as_deref_mut() {
+            c.resumed_at(head.k);
+        }
+        (w, h, crop, cmask, note, Box::new(chain), Some(restored))
+    } else {
+        let mut stream = frames(cli, cfg, source, start, stop, step)?;
+        let Some(first) = stream.next() else {
+            bail!("no frames to track in {source} (check --start, --stop and --step)");
+        };
+        let first = first?;
+        let Some(second) = stream.next() else {
+            bail!("need at least two frames to track, got 1");
+        };
+        let second = second?;
+        let (w, h) = (first.w, first.h);
+        let mask = region(cli, w, h)?;
+        let crop = plan_crop(cli, cfg, mask.as_ref(), true)?;
+        let cmask = cut_mask(crop.as_ref(), mask);
+        if crop.is_some() && (second.w, second.h) != (w, h) {
+            // what track_sequence reports for it, with the sizes of the whole frames
+            bail!(TrackError::FrameShape {
+                k: 1,
+                got: (second.h, second.w),
+                expected: (h, w)
+            });
+        }
+        let first = cut(crop.as_ref(), first);
+        let note = capture_warning(cfg, first.h, first.w);
+        let chain = std::iter::once(first)
+            .chain(std::iter::once(cut(crop.as_ref(), second)))
+            .chain(Frames {
+                inner: stream,
+                failure: Rc::clone(&failure),
+                crop,
+                size: (w, h),
+                index: 2,
+            });
+        (w, h, crop, cmask, note, Box::new(chain), None)
+    };
     let mut warned = false;
-    for item in track_sequence_with(engine, chain, cfg, cmask.as_ref(), WRITTEN_STRAIN) {
+    let mut seq = resumable_sequence(engine, chain, cfg, cmask.as_ref(), WRITTEN_STRAIN, restored)?;
+    while let Some(item) = seq.next() {
         let (k, res) = item?;
         if let Some(note) = note.take() {
             hooks.warn(&note);
@@ -494,12 +579,27 @@ fn run_seq(
             res.timing.mean_conf.unwrap_or(f64::NAN)
         ))?;
         hooks.frame_done(k, &res);
-        if hooks.cancelled() {
+        drop(res);
+        let stop_now = hooks.cancelled();
+        if let Some(c) = ckpt.as_deref_mut() {
+            if stop_now || c.due() {
+                // a run goes on without its autosave; the last good checkpoint stays
+                match c.save(&seq, &hooks.checkpoint_extra()) {
+                    Ok(Some(info)) => hooks.checkpoint_saved(&info),
+                    Ok(None) => {}
+                    Err(e) => hooks.warn(&format!("warning: checkpoint not saved: {e:#}")),
+                }
+            }
+        }
+        if stop_now {
             return Err(anyhow::Error::new(Cancelled));
         }
     }
     if let Some(e) = failure.borrow_mut().take() {
         return Err(e);
+    }
+    if let Some(c) = ckpt.as_deref() {
+        c.finished()?;
     }
     Ok(())
 }

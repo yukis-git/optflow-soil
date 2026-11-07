@@ -18,15 +18,15 @@ use super::*;
 /// State of a hybrid run beyond the chain's `Run`.
 pub(super) struct Hybrid {
     /// `c0K` is trusted (the pixel was direct-good when the reference moved).
-    anch: Vec<bool>,
+    pub(super) anch: Vec<bool>,
     /// Raw output of frame `k - 1`.
-    u_prev: (Image<f32>, Image<f32>),
+    pub(super) u_prev: (Image<f32>, Image<f32>),
     /// Consecutive frames each pixel has been carried by the adjacent leg (capped at `fb_max + 1`).
-    nfb: Vec<u32>,
+    pub(super) nfb: Vec<u32>,
     /// Direct-good at `k - 1` (frame 0 counts as good).
-    good_prev: Vec<bool>,
+    pub(super) good_prev: Vec<bool>,
     /// Raw displacement of the adjacent leg computed at `k - 1` (its start at `k`).
-    prev_adj: Option<(Image<f32>, Image<f32>)>,
+    pub(super) prev_adj: Option<(Image<f32>, Image<f32>)>,
 }
 
 impl Hybrid {
