@@ -33,7 +33,7 @@ Metal GPU 版(`optflow-gpu`)、デスクトップアプリ(`optflow-app`、efram
 ```sh
 git clone https://github.com/yukis-git/optflow-soil.git && cd optflow-soil
 cd rust && cargo build --release -p optflow-cli -p optflow-app   # target/release/optflow, optflow-app
-# GPU(macOS のみ): cargo build --release -p optflow-cli --features gpu
+# GPU(macOS のみ): cargo build --release -p optflow-cli -p optflow-app --features optflow-cli/gpu,optflow-app/gpu
 cd ../python && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
@@ -94,7 +94,7 @@ cd python && .venv/bin/python -m demo.run_demo --size small --out ../demo_out
 
 ### 既知の制限
 - **ひび割れモデル**(`--set crack_model=xdic`)は**実験的**で、既定ではオフ。ひびの判定しきい値は検証されていません。CPU のみ(`--device gpu` は拒否)。
-- **GPU 版は Mac の Metal のみ。**
+- **GPU 版は Mac の Metal のみ**(Windows に GPU はありません)。アプリでは GPU 付きでビルドした Mac 版(`cargo build --release -p optflow-app --features gpu`)の「3. 設定」で「計算装置」を選びます。既定は CPU。GPU は CPU と完全には一致せず、推奨設定の実データでは GPU 仕様のロバスト基準を満たしませんでした(`rust/README.md` 参照)。再開は同じ装置でしかできず、失敗時は CPU に切り替えず止まります。
 - **Windows の GUI は実機で未検証。** CI(GitHub Actions)でのビルド・ヘッドレス確認のみ。OpenGL 2.0 以上が必要で、リモートデスクトップや仮想マシンでは開かないことがあります。
 - macOS 用のバイナリは署名していません(初回は Gatekeeper の警告が出ます)。
 - 動画の読み込みには ffmpeg が必要です。
@@ -137,7 +137,7 @@ Download a zip from the [releases page](https://github.com/yukis-git/optflow-soi
 ```sh
 git clone https://github.com/yukis-git/optflow-soil.git && cd optflow-soil
 cd rust && cargo build --release -p optflow-cli -p optflow-app   # target/release/optflow, optflow-app
-# GPU (macOS only): cargo build --release -p optflow-cli --features gpu
+# GPU (macOS only): cargo build --release -p optflow-cli -p optflow-app --features optflow-cli/gpu,optflow-app/gpu
 cd ../python && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
@@ -187,7 +187,7 @@ It shows the fields (ux, uy, strains, gmax), statistics, and exports CSV and PNG
 
 ### Known limits
 - The **crack model** (`--set crack_model=xdic`) is **experimental**, off by default, its decision threshold is not validated, and it is CPU only (`--device gpu` is refused).
-- **GPU: Mac with Metal only.**
+- **GPU: Mac with Metal only** (Windows has no GPU). In the app, build with `cargo build --release -p optflow-app --features gpu` and choose "計算装置" (device) in step 3; the default is CPU. GPU results differ slightly from the CPU and, with the recommended settings on real data, did not meet the GPU spec's robust tier (see `rust/README.md`), a run resumes only on the device that saved it, and a GPU failure stops the run instead of switching to the CPU.
 - **The Windows GUI is not verified on real hardware**: it is only built and smoke-tested headless in CI. It needs OpenGL 2.0+ and may not open under remote desktop or in a VM.
 - The macOS binary is unsigned (Gatekeeper will warn).
 - Video input needs ffmpeg.

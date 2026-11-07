@@ -92,14 +92,67 @@ fn save(
     Ok(())
 }
 
+/// The GPU engine could not be started (no Metal device, a shader that does not compile, a build
+/// without the GPU backend): `--device gpu` is a request, never a hint, so the run stops.
+#[derive(Debug)]
+pub struct GpuStartFailed(pub String);
+
+impl std::fmt::Display for GpuStartFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for GpuStartFailed {}
+
+/// Whether `e` is the GPU engine's failure: it did not start ([`GpuStartFailed`]) or it failed in
+/// the fine stage (`TrackError::Engine`, which the CPU engine never gives).
+pub fn is_gpu_failure(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<GpuStartFailed>().is_some()
+            || matches!(c.downcast_ref::<TrackError>(), Some(TrackError::Engine(_)))
+    })
+}
+
+/// Whether this build can run the fine stage on the GPU, and if so the name of the device; else
+/// why not. Looks for the device only (it does not compile the shaders).
+pub fn gpu_probe() -> std::result::Result<String, String> {
+    #[cfg(all(feature = "gpu", target_os = "macos"))]
+    {
+        optflow_gpu::device_name().map_err(|e| e.to_string())
+    }
+    #[cfg(not(all(feature = "gpu", target_os = "macos")))]
+    {
+        Err("this build has no GPU backend (macOS build with --features gpu)".to_string())
+    }
+}
+
+/// [`gpu_probe`], and also starts the engine (compiles the shaders): what `--device gpu` needs.
+pub fn gpu_check() -> std::result::Result<String, String> {
+    #[cfg(all(feature = "gpu", target_os = "macos"))]
+    {
+        let e = optflow_gpu::GpuEngine::new().map_err(|e| e.to_string())?;
+        Ok(e.device_name())
+    }
+    #[cfg(not(all(feature = "gpu", target_os = "macos")))]
+    {
+        gpu_probe()
+    }
+}
+
 /// The engine of the fine stage for `--device`; a missing GPU is an error, never a fallback.
 fn engine(d: Device) -> Result<Box<dyn FineEngine>> {
     match d {
         Device::Cpu => Ok(Box::new(CpuEngine)),
         #[cfg(all(feature = "gpu", target_os = "macos"))]
-        Device::Gpu => Ok(Box::new(optflow_gpu::GpuEngine::new()?)),
+        Device::Gpu => match optflow_gpu::GpuEngine::new() {
+            Ok(e) => Ok(Box::new(e)),
+            Err(e) => Err(anyhow::Error::new(GpuStartFailed(e.to_string()))),
+        },
         #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-        Device::Gpu => bail!("--device gpu needs a macOS build with --features gpu"),
+        Device::Gpu => Err(anyhow::Error::new(GpuStartFailed(
+            "--device gpu needs a macOS build with --features gpu".to_string(),
+        ))),
     }
 }
 
@@ -263,16 +316,32 @@ pub fn run(cli: &Cli) -> Result<()> {
 
 /// [`run`] with `hooks` in place of stdout, stderr and the stop condition of the command line.
 pub fn run_with(cli: &Cli, hooks: &mut dyn Hooks) -> Result<()> {
-    run_inner(cli, hooks, None)
+    run_inner(cli, hooks, None, None)
 }
 
 /// [`run_with`] that saves checkpoints as `ckpt` says and, if it says so, continues from one. A
 /// `pair` command has nothing to save and runs as usual.
 pub fn run_checkpointed(cli: &Cli, hooks: &mut dyn Hooks, ckpt: &mut Checkpointing) -> Result<()> {
-    run_inner(cli, hooks, Some(ckpt))
+    run_inner(cli, hooks, Some(ckpt), None)
 }
 
-fn run_inner(cli: &Cli, hooks: &mut dyn Hooks, ckpt: Option<&mut Checkpointing>) -> Result<()> {
+/// [`run_checkpointed`] (or [`run_with`] without `ckpt`) with `engine` in place of the one
+/// `cli.device` names (for tests of how a run ends when the engine fails).
+pub fn run_on_engine(
+    cli: &Cli,
+    hooks: &mut dyn Hooks,
+    ckpt: Option<&mut Checkpointing>,
+    engine: &dyn FineEngine,
+) -> Result<()> {
+    run_inner(cli, hooks, ckpt, Some(engine))
+}
+
+fn run_inner(
+    cli: &Cli,
+    hooks: &mut dyn Hooks,
+    ckpt: Option<&mut Checkpointing>,
+    over: Option<&dyn FineEngine>,
+) -> Result<()> {
     let cfg = settings::config(cli.config.as_deref(), &cli.set)?;
     if cli.roi.is_some() && cli.mask.is_some() {
         bail!("--roi and --mask are mutually exclusive");
@@ -286,7 +355,14 @@ fn run_inner(cli: &Cli, hooks: &mut dyn Hooks, ckpt: Option<&mut Checkpointing>)
              baseline solve, which the GPU engine does not return); use --device cpu"
         );
     }
-    let engine = engine(cli.device)?;
+    let made;
+    let engine: &dyn FineEngine = match over {
+        Some(e) => e,
+        None => {
+            made = engine(cli.device)?;
+            &*made
+        }
+    };
     fs::create_dir_all(&cli.out).with_context(|| format!("cannot create {}", cli.out.display()))?;
     let config_path = cli.out.join("config.json");
     fs::write(&config_path, settings::config_json(&cfg))
@@ -316,7 +392,7 @@ fn run_inner(cli: &Cli, hooks: &mut dyn Hooks, ckpt: Option<&mut Checkpointing>)
             let note = capture_warning(&cfg, i1.h, i1.w);
             // the images are released once the fine stage is done, the ROI after the border check
             let res =
-                track_pair_owned_with(&*engine, i1, i2, &cfg, mask.as_ref(), None, WRITTEN_STRAIN)?;
+                track_pair_owned_with(engine, i1, i2, &cfg, mask.as_ref(), None, WRITTEN_STRAIN)?;
             if let Some(note) = &note {
                 hooks.warn(note);
             }
@@ -338,7 +414,7 @@ fn run_inner(cli: &Cli, hooks: &mut dyn Hooks, ckpt: Option<&mut Checkpointing>)
             step,
         } => run_seq(
             cli,
-            &*engine,
+            engine,
             &cfg,
             frames,
             (*start, *stop, *step),
@@ -608,6 +684,19 @@ fn run_seq(
 mod tests {
     use super::*;
     use optflow_core::config::Config;
+
+    #[test]
+    fn a_gpu_failure_is_told_from_other_errors() {
+        let start = anyhow::Error::new(GpuStartFailed("no Metal device".into()));
+        assert!(is_gpu_failure(&start));
+        assert_eq!(format!("{start:#}"), "no Metal device");
+        let fine = anyhow::Error::new(TrackError::Engine("GPU command failed".into()))
+            .context("while tracking");
+        assert!(is_gpu_failure(&fine));
+        assert!(!is_gpu_failure(&anyhow!("cannot decode x.png")));
+        assert!(!is_gpu_failure(&anyhow::Error::new(Cancelled)));
+        assert!(!is_gpu_failure(&anyhow::Error::new(TrackError::NoFrames)));
+    }
 
     #[test]
     fn fmt_g_is_pythons_format_g() {

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use anyhow::Result;
+use optflow_cli::args::Device;
 use optflow_cli::checkpoint::{self, Meta, Summary, FILE};
 use optflow_core::checkpoint::{CheckpointError, Sum, FORMAT};
 
@@ -33,6 +34,9 @@ impl Mismatch {
             }
             Mismatch::Roi => "ROI が中断時と異なります。".into(),
             Mismatch::Range => "開始・終了・間隔が中断時と異なります。".into(),
+            Mismatch::Setting(name) if name == "device" => "計算装置(CPU / GPU)が中断時と異なります。\
+                GPU の結果は CPU の結果と最後の桁まで同じにはならないため、中断時と同じ装置でしか再開できません。"
+                .into(),
             Mismatch::Setting(name) => format!("設定 {name} が中断時と異なります。"),
             Mismatch::Build => {
                 "中断時とアプリの版または動作環境が異なるため、同じ結果を保証できません。".into()
@@ -47,7 +51,7 @@ impl Mismatch {
 }
 
 /// The keys of the settings in the metadata.
-const SETTING_KEYS: [&str; 9] = [
+const SETTING_KEYS: [&str; 10] = [
     "seq_mode",
     "tavg",
     "prewarp_freeze_at",
@@ -57,9 +61,19 @@ const SETTING_KEYS: [&str; 9] = [
     "sigma_w",
     "scale",
     "crack",
+    "device",
 ];
 
-fn setting_values(s: &Settings) -> [String; 9] {
+/// The name of a device in the metadata (what a checkpoint written before the GPU choice existed
+/// has implicitly: `cpu`).
+pub fn device_name(d: Device) -> &'static str {
+    match d {
+        Device::Cpu => "cpu",
+        Device::Gpu => "gpu",
+    }
+}
+
+fn setting_values(s: &Settings) -> [String; 10] {
     [
         s.seq_mode.clone(),
         s.tavg.to_string(),
@@ -70,6 +84,7 @@ fn setting_values(s: &Settings) -> [String; 9] {
         format!("{}", s.sigma_w),
         s.scale.to_string(),
         s.crack.to_string(),
+        device_name(s.effective_device()).to_string(),
     ]
 }
 
@@ -173,7 +188,14 @@ pub fn compare(saved: &Meta, now: &Meta) -> Vec<Mismatch> {
         out.push(Mismatch::Range);
     }
     for k in SETTING_KEYS {
-        if differs(&format!("set.{k}")) {
+        let key = format!("set.{k}");
+        // a checkpoint of a version without the choice of device ran on the CPU
+        let value = |m: &'_ Meta| -> Option<String> {
+            m.get(&key)
+                .or((k == "device").then_some("cpu"))
+                .map(str::to_string)
+        };
+        if value(saved) != value(now) {
             out.push(Mismatch::Setting(k.to_string()));
         }
     }
@@ -205,6 +227,11 @@ pub fn saved_values(m: &Meta) -> Option<Saved> {
         sigma_w: set("sigma_w")?.parse().ok()?,
         scale: set("scale")?.parse().ok()?,
         crack: set("crack")?.parse().ok()?,
+        device: match set("device").unwrap_or("cpu") {
+            "cpu" => Device::Cpu,
+            "gpu" => Device::Gpu,
+            _ => return None,
+        },
     };
     let roi = match m.get("roi")? {
         "" => vec![],
@@ -391,6 +418,7 @@ mod tests {
         check(&|s| s.settings.sigma_w = 3.5, setting("sigma_w"));
         check(&|s| s.settings.scale = 2, setting("scale"));
         check(&|s| s.settings.crack = true, setting("crack"));
+        check(&|s| s.settings.device = Device::Gpu, setting("device"));
         // the output folder and the autosave interval do not change results
         check_same(&base);
     }
@@ -400,6 +428,30 @@ mod tests {
         s.out = PathBuf::from("/elsewhere");
         s.autosave = Some(optflow_cli::checkpoint::Policy::default());
         assert!(compare(base, &plain_meta(&s)).is_empty());
+    }
+
+    #[test]
+    fn the_device_identifies_a_run_and_an_old_checkpoint_ran_on_the_cpu() {
+        let cpu = plain_meta(&spec());
+        let mut g = spec();
+        g.settings.device = Device::Gpu;
+        let gpu = plain_meta(&g);
+        let want = vec![Mismatch::Setting("device".into())];
+        assert_eq!(compare(&cpu, &gpu), want);
+        assert_eq!(compare(&gpu, &cpu), want);
+        assert!(compare(&gpu, &gpu).is_empty());
+        assert!(want[0].restorable());
+        assert!(want[0].text().contains("GPU"));
+        assert_eq!(saved_values(&gpu).unwrap().settings.device, Device::Gpu);
+        // the crack model runs on the CPU whatever was chosen
+        g.settings.crack = true;
+        assert_eq!(plain_meta(&g).get("set.device"), Some("cpu"));
+        // a checkpoint written before the choice existed has no such key
+        let mut old = cpu.clone();
+        old.0.retain(|(k, _)| k != "set.device");
+        assert!(compare(&old, &cpu).is_empty());
+        assert_eq!(compare(&old, &gpu), want);
+        assert_eq!(saved_values(&old).unwrap().settings.device, Device::Cpu);
     }
 
     #[test]

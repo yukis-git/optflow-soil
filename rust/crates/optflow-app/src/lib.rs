@@ -4,6 +4,7 @@
 
 pub mod colormap;
 pub mod crack;
+pub mod device;
 pub mod export;
 pub mod fields;
 pub mod fonts;

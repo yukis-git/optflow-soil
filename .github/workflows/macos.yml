@@ -1,7 +1,8 @@
 name: macos
 
-# Tests of optflow-core, optflow-cli (default features) and optflow-app on macOS. The Metal backend
-# (optflow-gpu) needs a real GPU and is not run here.
+# Tests of optflow-core, optflow-cli and optflow-app on macOS, with the default features and with
+# the Metal backend (`gpu`, the build that is released). A runner without a usable Metal device
+# skips the tests that need one and prints why; the crate optflow-gpu itself is not tested here.
 on:
   push:
     branches: [main]
@@ -37,3 +38,6 @@ jobs:
 
       - name: Test optflow-core, optflow-cli, optflow-app
         run: cargo test --release --no-fail-fast -p optflow-core -p optflow-cli -p optflow-app
+
+      - name: Test optflow-cli, optflow-app with the Metal backend
+        run: cargo test --release --no-fail-fast -p optflow-cli -p optflow-app --features optflow-cli/gpu,optflow-app/gpu

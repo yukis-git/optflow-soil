@@ -46,9 +46,9 @@ jobs:
         working-directory: rust
     steps:
       - uses: actions/checkout@v4
-      - name: Build (the command line with the Metal backend)
+      - name: Build (the app and the command line, both with the Metal backend)
         run: |
-          cargo build --release -p optflow-app
+          cargo build --release -p optflow-app --features gpu
           cargo build --release -p optflow-cli --features gpu
       - name: Headless smoke test
         run: target/release/optflow-app --headless-smoke "$RUNNER_TEMP/smoke"

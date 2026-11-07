@@ -192,6 +192,12 @@ bit-identical.
   median |dux| 0, 99 % below 2e-6 px, the RMS is carried by 0.08 % of the pixels) but passes the robust
   tier (ux, uy 99.9 % RMS 1.35e-6 / 2.34e-6, p99 1.9e-6 / 4.3e-6, strain 99.9 % RMS <= 7.3e-7, conf 9.3e-6,
   mask agreement 0.9999985), as do sequence frames 1, 10 and 20; see the GPU spec, sections 5 and 8.
+  Measured again on 2026-11-07 and 2026-11-08 with the recommended settings (hybrid, tavg 3, freeze 3, ROI), this does not
+  hold. A 1920x1080 video sequence fails the robust tier on all 5 frames (uy p99 up to 4.1e-5 px, conf RMS up to 4.6e-4)
+  and 6240x4160 photos fail it on all 3 frames, on conf RMS only (up to 7.0e-4). Valid fraction differs by at most
+  0.0003 points. The 512^2 synthetic suite passes the plain tier in 36 of 41 cases; large_motion, shear_0.001, shear_0.01,
+  shear_0.1 and shift_0.0 miss only the all-pixel conf RMS (0 to 3 pixels flip at the mask border). Error against the
+  truth differs by at most 2.25e-8 px. For this reason the CPU stays the app's default device.
 
 ## Verification: `scripts/check.sh`
 

@@ -1,5 +1,7 @@
 //! The settings the user edits and how they become `--set key=value` overrides of the CLI.
 
+use optflow_cli::args::Device;
+
 /// A named set of values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Preset {
@@ -32,6 +34,10 @@ pub struct Settings {
     pub scale: i64,
     /// Crack model `crack_model = "xdic"` (experimental; not part of any preset).
     pub crack: bool,
+    /// Where the fine stage runs. The GPU (Metal, macOS) gives results that agree with the CPU's
+    /// to within the tolerances of the GPU spec but not bit for bit, so it is part of what
+    /// identifies a run; see [`Settings::effective_device`].
+    pub device: Device,
 }
 
 impl Settings {
@@ -47,6 +53,7 @@ impl Settings {
             sigma_w: d.sigma_w,
             scale: 1,
             crack: false,
+            device: Device::Cpu,
         };
         match p {
             Preset::Standard => base,
@@ -62,14 +69,24 @@ impl Settings {
 
     /// The preset these values equal, if any.
     pub fn matching_preset(&self) -> Option<Preset> {
-        // the crack toggle is independent of the presets
+        // the crack toggle and the device are independent of the presets
         let plain = Settings {
             crack: false,
+            device: Device::Cpu,
             ..self.clone()
         };
         [Preset::Recommended, Preset::Standard]
             .into_iter()
             .find(|p| plain == Settings::preset(*p))
+    }
+
+    /// The device the run uses: the crack model runs on the CPU only, whatever was chosen.
+    pub fn effective_device(&self) -> Device {
+        if self.crack {
+            Device::Cpu
+        } else {
+            self.device
+        }
     }
 
     /// The `--set key=value` overrides (every value of this struct is passed, so the run does not
@@ -138,6 +155,19 @@ mod tests {
         s.crack = true;
         assert_eq!(s.matching_preset(), Some(Preset::Recommended));
         assert_eq!(config_of(&s).crack_model, "xdic");
+    }
+
+    #[test]
+    fn the_device_is_cpu_by_default_not_a_preset_and_never_gpu_with_the_crack_model() {
+        let mut s = Settings::preset(Preset::Recommended);
+        assert_eq!(s.device, Device::Cpu);
+        s.device = Device::Gpu;
+        assert_eq!(s.matching_preset(), Some(Preset::Recommended));
+        assert_eq!(s.effective_device(), Device::Gpu);
+        // the device is not a key of the configuration
+        assert!(!s.overrides().iter().any(|o| o.contains("device")));
+        s.crack = true;
+        assert_eq!(s.effective_device(), Device::Cpu);
     }
 
     #[test]

@@ -3,11 +3,15 @@ name = "optflow-app"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "Desktop app (egui, CPU only) for the optflow soil-strain phase tracking"
+description = "Desktop app (egui) for the optflow soil-strain phase tracking; the fine stage runs on the CPU, or on the Metal GPU in a macOS build with the gpu feature"
 
 [[bin]]
 name = "optflow-app"
 path = "src/main.rs"
+
+[features]
+# Metal GPU backend for the fine stage (macOS only; off by default, and a no-op elsewhere)
+gpu = ["optflow-cli/gpu"]
 
 [dependencies]
 optflow-core = { path = "../optflow-core" }

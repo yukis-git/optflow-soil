@@ -151,6 +151,10 @@ mod gpu {
 
     #[test]
     fn gpu_pair_and_seq_match_cpu_and_record_the_device() {
+        if let Err(why) = optflow_cli::run::gpu_check() {
+            eprintln!("skipped: no usable Metal GPU here ({why})");
+            return;
+        }
         let dir = scratch("device_gpu");
         let (w, h) = (256, 256);
         let p = make_pattern(w, h, 3);

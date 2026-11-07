@@ -46,6 +46,26 @@ pub fn describe(e: &anyhow::Error) -> String {
     format!("エラーが発生しました。\n({full})")
 }
 
+/// The message of a run that stopped because the GPU engine failed (it did not start, or it failed
+/// in the fine stage). The run is never moved to the CPU by itself: the results would then come
+/// from two devices. `has_checkpoint`: a checkpoint of this run is in the folder.
+pub fn gpu_failed(e: &anyhow::Error, has_checkpoint: bool) -> String {
+    let mut text = String::from(
+        "GPU での計算に失敗したため、解析を止めました。CPU に自動で切り替えることはしません(結果を出した装置が途中で変わるのを避けるためです)。\n",
+    );
+    if has_checkpoint {
+        text.push_str(
+            "保存済みの再開用データは消していません。GPU のまま「再開」でもう一度試せます(GPU の再開用データは CPU では使えません)。CPU で解析するときは、計算装置を CPU にして最初から解析してください。\n",
+        );
+    } else {
+        text.push_str(
+            "もう一度 GPU で試すか、「3. 設定」の計算装置を CPU にして解析してください。\n",
+        );
+    }
+    text.push_str(&format!("({e:#})"));
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,6 +77,16 @@ mod tests {
             "crack_model 'xdic' takes images of at most 8294400 pixels (it holds about 1.1 GB per million pixels), got 4000x3000"
         ));
         assert!(m.contains("ROI") && m.contains("縮小率"));
+    }
+
+    #[test]
+    fn a_gpu_failure_says_what_was_not_done() {
+        let e = anyhow!("GPU command failed: x");
+        let with = gpu_failed(&e, true);
+        assert!(with.contains("自動で切り替えることはしません"));
+        assert!(with.contains("消していません") && with.contains("(GPU command failed: x)"));
+        let without = gpu_failed(&e, false);
+        assert!(without.contains("計算装置を CPU") && !without.contains("消していません"));
     }
 
     #[test]

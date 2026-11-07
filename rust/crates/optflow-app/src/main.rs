@@ -10,6 +10,7 @@ use std::time::Instant;
 use eframe::egui::{self, Color32, RichText, Stroke};
 use egui_plot::{Line, Plot, PlotPoints, VLine};
 use optflow_app::colormap::{color, Scale};
+use optflow_app::device::{self, Gpu};
 use optflow_app::export::{self, Timing};
 use optflow_app::fields::Fields;
 use optflow_app::job::{self, JobSpec, Msg, Running};
@@ -20,6 +21,7 @@ use optflow_app::source::{Gray8, Source};
 use optflow_app::stats::{FrameStats, Overlay};
 use optflow_app::view::{self, ViewKey, ViewWorker};
 use optflow_app::{fonts, messages, power};
+use optflow_cli::args::Device;
 use optflow_cli::checkpoint::{self, Policy, SaveInfo, Summary};
 
 /// How far from a ROI handle the pointer still takes it, in screen pixels at any zoom.
@@ -59,6 +61,9 @@ struct Script {
     /// Open the input with a stopped run in the folder: nothing is drawn, the run goes on.
     reopen: bool,
     checked_refusal: bool,
+    /// Choose the GPU before the run, and after the stop try a resume on the other device.
+    gpu: bool,
+    checked_device: bool,
 }
 
 /// Test mode (`--selftest SOURCE "x,y;x,y;..." OUTDIR`): the window does what a user would do,
@@ -149,6 +154,11 @@ struct App {
     btn_resume: Option<egui::Rect>,
     btn_restore: Option<egui::Rect>,
     btn_ask_cancel: Option<egui::Rect>,
+    btn_device_cpu: Option<egui::Rect>,
+    btn_device_gpu: Option<egui::Rect>,
+    /// Whether the machine has a Metal GPU (looked for on a thread of its own at startup).
+    gpu: Gpu,
+    gpu_rx: Option<Receiver<Gpu>>,
 }
 
 fn setup_fonts(ctx: &egui::Context) -> Option<PathBuf> {
@@ -173,6 +183,18 @@ impl App {
             .unwrap_or_else(|| PathBuf::from("optflow_出力"));
         let c = cc.egui_ctx.clone();
         let view = ViewWorker::start(Arc::new(move || c.request_repaint()));
+        // looking for the Metal device must not delay the window
+        let (gpu, gpu_rx) = if device::BUILT {
+            let (tx, rx) = channel();
+            let c = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(device::probe());
+                c.request_repaint();
+            });
+            (Gpu::Checking, Some(rx))
+        } else {
+            (device::probe(), None)
+        };
         App {
             source: None,
             first: None,
@@ -228,6 +250,10 @@ impl App {
             btn_resume: None,
             btn_restore: None,
             btn_ask_cancel: None,
+            btn_device_cpu: None,
+            btn_device_gpu: None,
+            gpu,
+            gpu_rx,
         }
     }
 
@@ -779,15 +805,19 @@ impl App {
                 for p in [Preset::Recommended, Preset::Standard] {
                     let on = self.settings.matching_preset() == Some(p);
                     if ui.selectable_label(on, p.label()).clicked() {
-                        let scale = self.settings.scale;
+                        let (scale, device) = (self.settings.scale, self.settings.device);
                         self.settings = Settings::preset(p);
                         self.settings.scale = scale;
+                        self.settings.device = device;
                     }
                 }
                 if self.settings.matching_preset().is_none() {
                     ui.label("(カスタム)");
                 }
             });
+            if device::BUILT {
+                self.device_choice(ui);
+            }
             egui::CollapsingHeader::new("詳細設定").show(ui, |ui| {
                 let s = &mut self.settings;
                 egui::Grid::new("adv").num_columns(2).show(ui, |ui| {
@@ -992,6 +1022,45 @@ impl App {
         }
     }
 
+    /// "計算装置": CPU or the Metal GPU (only in a build that has the GPU).
+    fn device_choice(&mut self, ui: &mut egui::Ui) {
+        let shown = self.settings.effective_device();
+        let crack = self.settings.crack;
+        let can_gpu = self.gpu.usable() && !crack;
+        ui.horizontal(|ui| {
+            ui.label("計算装置");
+            let cpu = ui.selectable_label(shown == Device::Cpu, "CPU");
+            self.btn_device_cpu = Some(cpu.rect);
+            if cpu.clicked() {
+                self.settings.device = Device::Cpu;
+            }
+            let gpu = ui
+                .add_enabled_ui(can_gpu, |ui| {
+                    ui.selectable_label(shown == Device::Gpu, "GPU (Metal)")
+                })
+                .inner;
+            self.btn_device_gpu = Some(gpu.rect);
+            if gpu.clicked() && can_gpu {
+                self.settings.device = Device::Gpu;
+            }
+        });
+        let note = if crack {
+            Some("亀裂モデルは CPU でのみ動きます。この解析は CPU で行います。".to_string())
+        } else {
+            match &self.gpu {
+                Gpu::Checking => Some("GPU を確認しています…".to_string()),
+                Gpu::Unavailable(why) => Some(why.clone()),
+                Gpu::Ready(name) if shown == Device::Gpu => Some(format!(
+                    "{name} で細密段を計算します。結果は CPU と完全には一致しません。実データでの比較では、99% の画素で変位の差は 0.0001 px 未満、一部の画素では最大で変位 約 0.01 px、gmax 約 0.015 の差がありました。"
+                )),
+                Gpu::Ready(_) => None,
+            }
+        };
+        if let Some(n) = note {
+            ui.add(egui::Label::new(n).wrap());
+        }
+    }
+
     /// The offer of a stopped run in the output folder.
     fn resume_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let Some(o) = &self.offer else { return };
@@ -1101,7 +1170,12 @@ impl App {
             let picked = optflow_cli::io::slice_indices(n, self.start, stop, self.step.max(1));
             picked.len().saturating_sub(1)
         });
-        Some(job::output_note(s.w, s.h, &self.settings, results))
+        let mut note = job::output_note(s.w, s.h, &self.settings, results);
+        if device::BUILT {
+            note.push('\n');
+            note.push_str(&job::memory_note(s.w, s.h, &self.settings));
+        }
+        Some(note)
     }
 
     fn image_panel(&mut self, ui: &mut egui::Ui) {
@@ -1782,12 +1856,26 @@ impl App {
                 s.stage = 12;
                 s.wait = 3;
             }
+            12 if s.gpu && self.settings.device != Device::Gpu => {
+                // the choice is a click on the radio, as a user's
+                log(self, "choosing the GPU");
+                let b = self
+                    .btn_device_gpu
+                    .expect("the device choice is on the screen");
+                assert!(self.gpu.usable(), "a Metal device is there: {:?}", self.gpu);
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.wait = 6;
+            }
             12 => {
                 log(self, "after a drag inside");
+                if s.gpu {
+                    assert_eq!(self.settings.effective_device(), Device::Gpu);
+                    Self::screenshot(ctx, &s.out, "05b_gpu_chosen");
+                }
                 let start = self.btn_start.expect("the start button is on the screen");
                 s.events.extend(click_events(start.center(), primary, 1));
                 s.stage = 13;
-                s.wait = 3;
+                s.wait = if s.gpu { 12 } else { 3 };
             }
             13 => {
                 if self.running.is_some()
@@ -1898,6 +1986,42 @@ impl App {
                 s.wait = 6;
                 s.stage = 19;
             }
+            // after a stop on the GPU: the other device is refused, and the way back restores it
+            19 if s.gpu && !s.checked_device => {
+                let b = self
+                    .btn_device_cpu
+                    .expect("the device choice is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.checked_device = true;
+                s.stage = 110;
+                s.wait = 6;
+            }
+            110 => {
+                let diff = self.offer_mismatches();
+                eprintln!("script: the device switched to the CPU, the offer says {diff:?}");
+                assert_eq!(
+                    diff,
+                    vec![Mismatch::Setting("device".into())],
+                    "the other device is refused"
+                );
+                Self::screenshot(ctx, &s.out, "08b_device_refused");
+                s.wait = 8;
+                s.stage = 111;
+            }
+            111 => {
+                let b = self.btn_restore.expect("the way back is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.stage = 112;
+                s.wait = 6;
+            }
+            112 => {
+                assert!(self.offer_mismatches().is_empty(), "the device came back");
+                assert_eq!(self.settings.effective_device(), Device::Gpu);
+                log(self, "back on the GPU, the device of the stopped run");
+                Self::screenshot(ctx, &s.out, "08c_device_restored");
+                s.wait = 8;
+                s.stage = 19;
+            }
             19 => {
                 assert!(self.offer.is_some(), "stopped: the run is offered");
                 let b = self.btn_resume.expect("the resume button is on the screen");
@@ -1996,6 +2120,10 @@ fn fmt_secs(s: f64) -> String {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        if let Some(g) = self.gpu_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.gpu = g;
+            self.gpu_rx = None;
+        }
         if let Some(rx) = &self.export_rx {
             if let Ok(r) = rx.try_recv() {
                 self.notice = Some(match r {
@@ -2103,6 +2231,7 @@ fn main() -> eframe::Result<()> {
                 wait: 5,
                 stop_at: stop_at.parse().unwrap_or(2),
                 quit_after_stop: rest.iter().any(|a| a == "quit"),
+                gpu: rest.iter().any(|a| a == "gpu"),
                 reopen: rest.iter().any(|a| a == "reopen"),
                 ..Script::default()
             })

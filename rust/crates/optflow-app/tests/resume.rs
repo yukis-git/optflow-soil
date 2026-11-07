@@ -6,9 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use optflow_app::fields::list_frames;
-use optflow_app::job::{run_job, JobSpec, Msg, CRACK_NO_RESUME};
+use optflow_app::job::{run_job, run_job_on, JobSpec, Msg, CRACK_NO_RESUME};
 use optflow_app::settings::{Preset, Settings};
+use optflow_cli::args::Device;
 use optflow_cli::checkpoint::{self, Policy, FILE, TMP};
+use optflow_core::engine::{CpuEngine, EngineError, FineEngine};
+use optflow_core::phaseflow::RawFlow;
 
 const W: usize = 200;
 const H: usize = 160;
@@ -605,4 +608,263 @@ fn a_failed_autosave_does_not_stop_the_run_and_keeps_the_last_checkpoint() {
     spec.resume = true;
     assert_eq!(run(&spec, None).0, End::Finished);
     assert_same_tree(&spec.out, &whole.out, "after a failed autosave");
+}
+
+// ---- the device is part of what identifies a run -----------------------------------------------
+
+/// A checkpoint of one device is refused by the other, before any engine starts and without
+/// touching the folder; the way back is the settings of the checkpoint.
+#[test]
+fn a_cpu_checkpoint_is_refused_on_the_gpu_and_nothing_is_deleted() {
+    let w = Work::new("cpu-to-gpu");
+    let mut spec = w.spec("run", hybrid_settings(), true);
+    spec.autosave = Some(ON_STOP);
+    assert_eq!(run(&spec, Some(3)).0, End::Cancelled);
+    let before = tree(&spec.out);
+    spec.resume = true;
+    spec.settings.device = Device::Gpu;
+    let (end, frames, _) = run(&spec, None);
+    let End::Failed(text) = end else {
+        panic!("{end:?}")
+    };
+    assert!(
+        text.contains("計算装置") && text.contains("再開できません"),
+        "{text}"
+    );
+    assert!(frames.is_empty());
+    assert!(tree(&spec.out) == before, "the folder changed");
+    // the crack model runs on the CPU whatever was chosen: the same device as the checkpoint
+    // (which has none, being a crack run's; here only the identity is looked at)
+    let mut crack = spec.clone();
+    crack.settings.crack = true;
+    assert_eq!(
+        optflow_app::resume::plain_meta(&crack).get("set.device"),
+        Some("cpu")
+    );
+}
+
+/// An engine that works until `fail` is set, then fails as a device error does.
+struct Fails<'a> {
+    fail: &'a AtomicBool,
+}
+
+impl FineEngine for Fails<'_> {
+    fn refine_raw(
+        &self,
+        i1: &optflow_core::image::Image<f32>,
+        i2: &optflow_core::image::Image<f32>,
+        shift: (i64, i64),
+        ux: &optflow_core::image::Image<f32>,
+        uy: &optflow_core::image::Image<f32>,
+        cfg: &optflow_core::config::Config,
+    ) -> Result<RawFlow, EngineError> {
+        if self.fail.load(Ordering::Relaxed) {
+            return Err(EngineError("GPU command failed: injected".into()));
+        }
+        CpuEngine.refine_raw(i1, i2, shift, ux, uy, cfg)
+    }
+}
+
+/// A GPU run whose engine fails after frame 4: it stops with the message, says it did not switch
+/// to the CPU, and the checkpoint of frame 4 is still there and still continues the run to the
+/// bytes of an uninterrupted one. (The engine here is the CPU's, behind a failing wrapper: the
+/// test is about how the app ends a run, not about Metal.)
+#[test]
+fn a_gpu_failure_stops_the_run_and_keeps_the_checkpoint() {
+    let w = Work::new("gpu-fails");
+    let mut spec = w.spec("run", hybrid_settings(), true);
+    spec.settings.device = Device::Gpu;
+    spec.autosave = Some(EVERY_FRAME);
+    let mut whole = spec.clone();
+    whole.out = w.base.join("whole");
+    let mut end = None;
+    run_job_on(
+        &whole,
+        &AtomicBool::new(false),
+        &mut |m| {
+            if let Msg::Finished = m {
+                end = Some(());
+            }
+        },
+        Some(&CpuEngine),
+    );
+    assert!(end.is_some());
+
+    let fail = AtomicBool::new(false);
+    let (mut last, mut frames) = (None, vec![]);
+    run_job_on(
+        &spec,
+        &AtomicBool::new(false),
+        &mut |m| match m {
+            Msg::Frame { stats } => {
+                if stats.k == 4 {
+                    fail.store(true, Ordering::Relaxed);
+                }
+                frames.push(stats.k);
+            }
+            Msg::Failed(t) => last = Some(t),
+            _ => {}
+        },
+        Some(&Fails { fail: &fail }),
+    );
+    let text = last.expect("the run failed");
+    assert!(
+        text.contains("GPU") && text.contains("自動で切り替えることはしません"),
+        "{text}"
+    );
+    assert!(text.contains("injected"), "{text}");
+    assert!(
+        text.contains("消していません"),
+        "the checkpoint is kept: {text}"
+    );
+    assert_eq!(frames, vec![1, 2, 3, 4]);
+    let ck = spec.out.join(FILE);
+    assert_eq!(checkpoint::summary(&ck).unwrap().head.k, 4);
+    assert!(!spec.out.join(TMP).exists());
+
+    // the checkpoint continues the run, on the same device
+    spec.resume = true;
+    let mut done = false;
+    run_job_on(
+        &spec,
+        &AtomicBool::new(false),
+        &mut |m| done |= matches!(m, Msg::Finished),
+        Some(&CpuEngine),
+    );
+    assert!(done);
+    assert_same_tree(&spec.out, &whole.out, "after a failure of the engine");
+}
+
+/// Without a GPU backend in the build, `Device::Gpu` is refused with the message of a GPU failure
+/// (never run on the CPU instead), and nothing is written but the run folder.
+#[cfg(not(all(feature = "gpu", target_os = "macos")))]
+#[test]
+fn a_gpu_run_without_a_gpu_backend_stops_and_does_not_use_the_cpu() {
+    let w = Work::new("no-backend");
+    let mut spec = w.spec("run", hybrid_settings(), true);
+    spec.settings.device = Device::Gpu;
+    let (end, frames, _) = run(&spec, None);
+    let End::Failed(text) = end else {
+        panic!("{end:?}")
+    };
+    assert!(
+        text.contains("GPU") && text.contains("自動で切り替えることはしません"),
+        "{text}"
+    );
+    assert!(frames.is_empty());
+    assert!(list_frames(&spec.out).is_empty());
+}
+
+// ---- the same on the Metal GPU -----------------------------------------------------------------
+
+#[cfg(all(feature = "gpu", target_os = "macos"))]
+mod gpu {
+    use super::*;
+    use std::sync::OnceLock;
+
+    /// Whether this machine runs the GPU engine; if not, says why and the test returns.
+    fn available() -> bool {
+        static CHECK: OnceLock<Result<String, String>> = OnceLock::new();
+        match CHECK.get_or_init(optflow_cli::run::gpu_check) {
+            Ok(name) => {
+                eprintln!("GPU test on {name}");
+                true
+            }
+            Err(why) => {
+                eprintln!("skipped: no usable Metal GPU here ({why})");
+                false
+            }
+        }
+    }
+
+    fn on_gpu(s: Settings) -> Settings {
+        Settings {
+            device: Device::Gpu,
+            ..s
+        }
+    }
+
+    /// That the run was on the GPU: `timing.json` says so.
+    fn assert_ran_on_gpu(w: &Work, spec: &JobSpec) {
+        let mut one = spec.clone();
+        one.out = w.base.join("probe");
+        assert_eq!(run(&one, Some(1)).0, End::Cancelled);
+        let t = std::fs::read_to_string(one.out.join("frame_00001").join("timing.json")).unwrap();
+        assert!(t.contains("\"device\": \"gpu\""), "{t}");
+        let _ = std::fs::remove_dir_all(&one.out);
+    }
+
+    #[test]
+    fn gpu_hybrid_with_averaging_a_frozen_prewarp_a_roi_and_fallback() {
+        if !available() {
+            return;
+        }
+        let w = Work::new("gpu-hybrid");
+        // tavg 3, prewarp_freeze_at 3, a reference that moves and pixels that fall back (the
+        // exercise checks both)
+        let s = on_gpu(hybrid_settings());
+        assert_eq!((s.tavg, s.prewarp_freeze_at), (3, 3));
+        let spec = w.spec("whole", s, true);
+        assert_ran_on_gpu(&w, &spec);
+        exercise(&w, "h", &spec);
+    }
+
+    #[test]
+    fn gpu_hybrid_without_averaging_or_roi() {
+        if !available() {
+            return;
+        }
+        let w = Work::new("gpu-hybrid-plain");
+        let s = on_gpu(Settings {
+            tavg: 0,
+            prewarp_freeze_at: 0,
+            ..hybrid_settings()
+        });
+        exercise(&w, "h", &w.spec("whole", s, false));
+    }
+
+    #[test]
+    fn gpu_chain_with_averaging() {
+        if !available() {
+            return;
+        }
+        let w = Work::new("gpu-chain");
+        exercise(&w, "c", &w.spec("whole", on_gpu(chain_settings(2)), false));
+    }
+
+    /// A GPU checkpoint is refused by the CPU, the way back restores the device, and the run then
+    /// continues to the bytes of the uninterrupted GPU run.
+    #[test]
+    fn a_gpu_checkpoint_is_refused_on_the_cpu_and_nothing_is_deleted() {
+        if !available() {
+            return;
+        }
+        let w = Work::new("gpu-to-cpu");
+        let whole = w.spec("whole", on_gpu(hybrid_settings()), true);
+        assert_eq!(run(&whole, None).0, End::Finished);
+        let mut spec = w.spec("run", on_gpu(hybrid_settings()), true);
+        spec.autosave = Some(ON_STOP);
+        assert_eq!(run(&spec, Some(3)).0, End::Cancelled);
+        let before = tree(&spec.out);
+        let mut cpu = spec.clone();
+        cpu.resume = true;
+        cpu.settings.device = Device::Cpu;
+        let (end, frames, _) = run(&cpu, None);
+        let End::Failed(text) = end else {
+            panic!("{end:?}")
+        };
+        assert!(
+            text.contains("計算装置") && text.contains("再開できません"),
+            "{text}"
+        );
+        assert!(frames.is_empty());
+        assert!(tree(&spec.out) == before, "the folder changed");
+        // what the window brings back
+        let found = checkpoint::summary(&spec.out.join(FILE)).unwrap();
+        let saved = optflow_app::resume::saved_values(&found.meta).unwrap();
+        assert_eq!(saved.settings.device, Device::Gpu);
+        spec.resume = true;
+        assert_eq!(run(&spec, None).0, End::Finished);
+        assert_same_tree(&spec.out, &whole.out, "GPU stop and resume");
+    }
 }

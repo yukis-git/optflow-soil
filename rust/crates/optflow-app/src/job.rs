@@ -10,7 +10,8 @@ use std::thread::JoinHandle;
 use anyhow::{Context, Result};
 use optflow_cli::args::{Cli, Command, CropMode, Device};
 use optflow_cli::checkpoint::{self, Checkpointing, Policy, SaveInfo};
-use optflow_cli::run::{run_checkpointed, run_with, Hooks};
+use optflow_cli::run::{is_gpu_failure, run_checkpointed, run_on_engine, run_with, Hooks};
+use optflow_core::engine::FineEngine;
 use optflow_core::image::Image;
 use optflow_core::track::TrackResult;
 
@@ -161,6 +162,33 @@ pub fn output_note(w: usize, h: usize, settings: &Settings, results: Option<usiz
     note
 }
 
+/// The peak memory of a run in bytes, as measured on the development Mac (Apple M4) with the
+/// recommended preset and a ROI of about half the frame: the maximum resident set size of the
+/// process, largest of the runs. 1920x1080 (6 frames): 1.69 GB on the CPU, 4.01 GB on the GPU.
+/// 6240x4160 (4 frames): 7.7 GB on the CPU, 8.0 GB on the GPU (the large frames are tiled, so the
+/// two devices are close there; the runs shared the machine with other jobs and the peak
+/// footprint, which counts compressed memory, was higher: 8.7 and 10.9 GB). Between the two sizes
+/// the value is interpolated by the pixel count; above them it is the larger one.
+pub fn memory_estimate(w: usize, h: usize, device: Device) -> u64 {
+    let px = (w * h) as f64;
+    let ((p0, m0), (p1, m1)) = match device {
+        Device::Cpu => ((2.07e6, 1.69e9), (2.59584e7, 7.7e9)),
+        Device::Gpu => ((2.07e6, 4.01e9), (2.59584e7, 8.0e9)),
+    };
+    let t = ((px - p0) / (p1 - p0)).clamp(0.0, 1.0);
+    (m0 + (m1 - m0) * t) as u64
+}
+
+/// The note on the memory of the run, for the device the run will use.
+pub fn memory_note(w: usize, h: usize, settings: &Settings) -> String {
+    let d = settings.effective_device();
+    format!(
+        "解析中のメモリの目安({}): 約 {}(この Mac での実測から。画像と設定により変わります)",
+        crate::device::label(d),
+        fmt_bytes(memory_estimate(w, h, d))
+    )
+}
+
 /// The ROI file the CLI reads, `{"polygon": [[x, y], ...]}`.
 pub fn roi_json(points: &[(f64, f64)]) -> String {
     let pts: Vec<String> = points.iter().map(|(x, y)| format!("[{x}, {y}]")).collect();
@@ -182,7 +210,7 @@ pub fn cli_for(spec: &JobSpec) -> Cli {
         scale: spec.settings.scale,
         crop: CropMode::Auto,
         crop_margin: None,
-        device: Device::Cpu,
+        device: spec.settings.effective_device(),
         config: None,
         set: spec.settings.overrides(),
         out: spec.out.clone(),
@@ -269,6 +297,17 @@ pub const CRACK_NO_RESUME: &str = "亀裂モデルでは再開できません。
 /// Runs `spec` on the calling thread, sending messages through `send`; the last one is
 /// `Finished`, `Cancelled` or `Failed`.
 pub fn run_job(spec: &JobSpec, cancel: &AtomicBool, send: &mut dyn FnMut(Msg)) {
+    run_job_on(spec, cancel, send, None);
+}
+
+/// [`run_job`] with `engine` in place of the one the device of the settings names (for tests of
+/// how a run ends when the engine fails).
+pub fn run_job_on(
+    spec: &JobSpec,
+    cancel: &AtomicBool,
+    send: &mut dyn FnMut(Msg),
+    engine: Option<&dyn FineEngine>,
+) {
     send(Msg::Started {
         total: expected_results(spec),
     });
@@ -322,14 +361,25 @@ pub fn run_job(spec: &JobSpec, cancel: &AtomicBool, send: &mut dyn FnMut(Msg)) {
         match (policy, meta) {
             (Some(policy), Some(meta)) => {
                 let mut ckpt = Checkpointing::new(spec.out.clone(), policy, meta, spec.resume);
-                run_checkpointed(&cli, &mut hooks, &mut ckpt)
+                match engine {
+                    Some(e) => run_on_engine(&cli, &mut hooks, Some(&mut ckpt), e),
+                    None => run_checkpointed(&cli, &mut hooks, &mut ckpt),
+                }
             }
-            _ => run_with(&cli, &mut hooks),
+            _ => match engine {
+                Some(e) => run_on_engine(&cli, &mut hooks, None, e),
+                None => run_with(&cli, &mut hooks),
+            },
         }
     };
     match result {
         Ok(()) => send(Msg::Finished),
         Err(e) if e.downcast_ref::<optflow_cli::run::Cancelled>().is_some() => send(Msg::Cancelled),
+        Err(e) if cli.device == Device::Gpu && is_gpu_failure(&e) => {
+            // the checkpoint of an earlier save is left as it is
+            let kept = spec.out.join(checkpoint::FILE).is_file();
+            send(Msg::Failed(messages::gpu_failed(&e, kept)));
+        }
         Err(e) => {
             let text = match e.downcast_ref::<optflow_core::checkpoint::CheckpointError>() {
                 Some(c) => resume::describe_error(c),
@@ -400,6 +450,26 @@ mod tests {
         std::fs::create_dir_all(base.join("run_001")).unwrap();
         assert_eq!(next_run_dir(&base), base.join("run_002"));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_memory_note_follows_the_device() {
+        let mut s = Settings::preset(Preset::Recommended);
+        let cpu = memory_estimate(1920, 1080, Device::Cpu);
+        let gpu = memory_estimate(1920, 1080, Device::Gpu);
+        assert!((1.6e9..1.8e9).contains(&(cpu as f64)));
+        assert!((3.9e9..4.1e9).contains(&(gpu as f64)));
+        assert!(memory_note(1920, 1080, &s).contains("(CPU)"));
+        s.device = Device::Gpu;
+        assert!(memory_note(1920, 1080, &s).contains("(GPU)"));
+        // the crack model is on the CPU whatever was chosen
+        s.crack = true;
+        assert!(memory_note(1920, 1080, &s).contains("(CPU)"));
+        // larger than the measured sizes: the largest measured value
+        assert_eq!(
+            memory_estimate(20000, 20000, Device::Cpu),
+            memory_estimate(6240, 4160, Device::Cpu)
+        );
     }
 
     #[test]

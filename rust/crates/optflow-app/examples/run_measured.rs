@@ -3,7 +3,7 @@
 //! checkpoint. Not part of the app.
 //!
 //! `run_measured SOURCE OUT [--start N] [--stop N] [--roi x,y;x,y;...] [--live] [--every] [--off]
-//!  [--stop-at K] [--resume] [--chain] [--tavg N]`
+//!  [--stop-at K] [--resume] [--chain] [--standard] [--scale N] [--tavg N] [--gpu]`
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,8 +37,17 @@ fn main() {
     });
     let src = Source::open(std::path::Path::new(&source)).unwrap();
     let mut settings = Settings::preset(Preset::Recommended);
+    if flag("--standard") {
+        settings = Settings::preset(Preset::Standard);
+    }
+    if let Some(n) = int("--scale") {
+        settings.scale = n;
+    }
     if flag("--chain") {
         settings.seq_mode = "chain".into();
+    }
+    if flag("--gpu") {
+        settings.device = optflow_cli::args::Device::Gpu;
     }
     if let Some(t) = int("--tavg") {
         settings.tavg = t;
