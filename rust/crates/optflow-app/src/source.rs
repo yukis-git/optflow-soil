@@ -37,6 +37,9 @@ pub struct Source {
     pub fps: f64,
     pub w: usize,
     pub h: usize,
+    /// A video of constant frame rate that starts at time 0: its frames can be found by time (see
+    /// [`Source::frame_preview`]). `None` for images and for any other video.
+    pub seekable: Option<f64>,
 }
 
 fn as_str(p: &Path) -> Result<&str> {
@@ -60,6 +63,7 @@ impl Source {
                 fps: m.fps,
                 w: m.w,
                 h: m.h,
+                seekable: video::constant_rate(path),
             })
         } else {
             let files = io::list_images(s)?;
@@ -71,6 +75,7 @@ impl Source {
                 fps: 1.0,
                 w: first.w,
                 h: first.h,
+                seekable: None,
             })
         }
     }
@@ -100,6 +105,20 @@ impl Source {
             bail!("選んだ画像を読み込めませんでした。");
         };
         Ok((src, lo as i64, hi as i64 + 1))
+    }
+
+    /// Frame `n` for the slider preview: a video of constant frame rate is read by an input seek
+    /// (a fraction of a second), any other source as [`Source::frame`]. Never for what a run reads
+    /// or for the frame the ROI is drawn on.
+    pub fn frame_preview(&self, n: i64) -> Result<Gray8> {
+        match self.seekable {
+            Some(fps) if self.is_video => Ok(to_u8(video::frame_at(
+                Path::new(&self.path),
+                n.max(0),
+                fps,
+            )?)),
+            _ => self.frame(n),
+        }
     }
 
     /// Frame number `start` of the source, for the ROI drawing.
@@ -150,6 +169,95 @@ mod tests {
         assert_eq!((f.w, f.h), (16, 12));
         assert_eq!(f.data[0], 2);
         let _ = std::fs::remove_dir_all(d.parent().unwrap());
+    }
+
+    /// The frame the slider shows is the frame a run reads: the one found by number gives the
+    /// pixels of decoding the video from its start.
+    #[test]
+    fn a_video_frame_found_by_number_is_the_frame_of_sequential_decoding() {
+        if !video::tools_available() {
+            eprintln!("skipped: no ffmpeg here");
+            return;
+        }
+        let d = scratch("video");
+        write_images(&d, 40);
+        let avi = d.join("clip.avi");
+        let made = std::process::Command::new(video::tool_path("ffmpeg"))
+            .args(["-v", "error", "-y", "-framerate", "5", "-i"])
+            .arg(d.join("f%03d.png"))
+            .args(["-c:v", "ffv1", "-pix_fmt", "gray"])
+            .arg(&avi)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let s = Source::open(&avi).unwrap();
+        assert_eq!((s.is_video, s.w, s.h), (true, 16, 12));
+        let all: Vec<Gray8> = video::iter_video(&avi, 0, None, 1)
+            .unwrap()
+            .map(|g| to_u8(g.unwrap()))
+            .collect();
+        assert_eq!(all.len(), 40);
+        for n in [0usize, 1, 4, 39] {
+            let f = s.frame(n as i64).unwrap();
+            assert_eq!((f.w, f.h), (16, 12));
+            assert!(f.data == all[n].data, "frame {n}");
+        }
+        // the slider's time seek gives the pixels of sequential decoding for every frame
+        assert_eq!(s.seekable, Some(5.0), "a constant-rate video is seekable");
+        for (n, want) in all.iter().enumerate() {
+            let f = s.frame_preview(n as i64).unwrap();
+            assert!(f.data == want.data, "seek, frame {n}");
+        }
+        // a variable-rate or late-starting stream is not seekable: it decodes from the start
+        let mut other = s.clone();
+        other.seekable = None;
+        assert!(other.frame_preview(4).unwrap().data == all[4].data);
+        // the frames differ from each other, so the check above can tell them apart
+        assert!(all[0].data != all[4].data);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// By hand on a real video: `OPTFLOW_SEEK_VIDEO=/path/video.mp4 cargo test --release -p
+    /// optflow-app --lib real_video -- --ignored --nocapture`. The seek gives the pixels of
+    /// sequential decoding at the frames in `OPTFLOW_SEEK_FRAMES` (comma separated), with times.
+    #[test]
+    #[ignore]
+    fn real_video_seek_matches_sequential_decoding() {
+        let Some(path) = std::env::var_os("OPTFLOW_SEEK_VIDEO") else {
+            eprintln!("skipped: OPTFLOW_SEEK_VIDEO is not set");
+            return;
+        };
+        let frames: Vec<i64> = std::env::var("OPTFLOW_SEEK_FRAMES")
+            .unwrap_or_else(|_| "0,1,2999,6000".into())
+            .split(',')
+            .map(|v| v.trim().parse().unwrap())
+            .collect();
+        let s = Source::open(Path::new(&path)).unwrap();
+        eprintln!("seekable: {:?}, frames {:?}", s.seekable, s.count);
+        assert!(s.seekable.is_some());
+        let t = std::time::Instant::now();
+        let mut want = std::collections::BTreeMap::new();
+        let last = *frames.iter().max().unwrap();
+        for (i, g) in video::iter_video(Path::new(&path), 0, Some(last + 1), 1)
+            .unwrap()
+            .enumerate()
+        {
+            if frames.contains(&(i as i64)) {
+                want.insert(i as i64, to_u8(g.unwrap()));
+            }
+        }
+        eprintln!(
+            "sequential decoding of 0..={last}: {:.2} s",
+            t.elapsed().as_secs_f64()
+        );
+        for n in frames {
+            let t = std::time::Instant::now();
+            let f = s.frame_preview(n).unwrap();
+            let secs = t.elapsed().as_secs_f64();
+            let same = f.data == want[&n].data;
+            eprintln!("frame {n}: seek {secs:.2} s, identical to sequential: {same}");
+            assert!(same, "frame {n}");
+        }
     }
 
     #[test]

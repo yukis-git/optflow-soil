@@ -1,3 +1,15 @@
+## v0.4.0 の変更
+- **計算するフレームの選択:** 「2. 範囲と領域」のスライダーで入力の任意のフレームを画像に表示でき(ROI は重ねたまま)、「このフレームを開始に」「このフレームを終了に」と「計算するフレーム: N 枚(…)」の行で範囲を決められます。成り立たない範囲は実行前に断ります。
+- **信頼度フィルターの ON/OFF:** 「3. 設定」で OFF にすると、信頼度が低い画素も含め ROI 内の全画素の変位とひずみを出力します。追跡、`conf`、`valid.npy`、`fb.npy`、有効率は変わりません。既定は ON で、このとき出力は v0.3.0 とバイト単位で同じです(`timing.json` の時間の値を除く)。実データ(1920×1080 の動画の先頭 6 結果、ROI あり、推奨設定)の最後の結果では、ROI 内で有効率は 93.2 %(ON/OFF とも)、変位が出る画素は ON で 93.2 %、OFF で 100 % でした。
+- **最初→最後の分布:** 完了した run に `first_last/`(gmax・ux・uy・conf の PNG、最後の結果の CSV、`summary.txt`)を書き、「5. 書き出し」のボタンで任意の run について書き出せます。
+- 再開用データには信頼度フィルターの設定が入ります。v0.3.0 までの再開用データは使えません(版が違うため、これまでどおり)。
+
+## v0.4.0 changes
+- **Choosing the frames to compute:** a slider in step 2 shows any frame of the input on the canvas (the ROI stays drawn), with "このフレームを開始に" / "このフレームを終了に" and a line "計算するフレーム: N 枚(…)". A range that cannot run is refused before the run.
+- **Confidence filter on/off:** off in step 3 writes the displacement and strain for every ROI pixel, low confidence or not. Tracking, `conf`, `valid.npy`, `fb.npy` and the valid fraction do not change. The default is on, and then the output is byte-identical to v0.3.0 (except the seconds in `timing.json`). On real data (the first 6 results of a 1920x1080 video, ROI, recommended settings) in the last result, the valid fraction was 93.2 % (on and off), and the share of ROI pixels with a displacement was 93.2 % on and 100 % off.
+- **First to last:** a finished run gets `first_last/` (PNGs of gmax, ux, uy, conf, the CSV of the last result, `summary.txt`), and a button in step 5 writes the same for any run on show.
+- The resume data holds the confidence-filter setting. Resume data of v0.3.0 and earlier cannot be used (another app version, as before).
+
 **ライセンス：PolyForm Noncommercial 1.0.0（非商用に限る）** / License: noncommercial use only.
 
 ## ダウンロードと起動

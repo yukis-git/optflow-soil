@@ -74,6 +74,7 @@ fn main() {
         out: out.clone(),
         autosave,
         resume: flag("--resume"),
+        fps: 1.0,
     };
     let stop_at = int("--stop-at").map(|k| k as usize);
     let live = flag("--live");

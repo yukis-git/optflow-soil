@@ -42,6 +42,8 @@ pub struct JobSpec {
     pub autosave: Option<Policy>,
     /// Continue from the checkpoint in `out`.
     pub resume: bool,
+    /// Frames per second of the input, for the times in `first_last/summary.txt` (the time axis).
+    pub fps: f64,
 }
 
 /// Messages from the worker to the window.
@@ -216,6 +218,7 @@ pub fn cli_for(spec: &JobSpec) -> Cli {
         out: spec.out.clone(),
         png: false,
         raw: false,
+        unfiltered: !spec.settings.effective_filter(),
     }
 }
 
@@ -373,7 +376,16 @@ pub fn run_job_on(
         }
     };
     match result {
-        Ok(()) => send(Msg::Finished),
+        Ok(()) => {
+            // the change from the first frame to the last, beside the frame folders
+            if let Err(e) = write_first_last(spec, &spec.out.join(crate::first_last::DIR), true) {
+                send(Msg::Warn(format!(
+                    "最初→最後の分布を書き出せませんでした: {}",
+                    messages::describe(&e)
+                )));
+            }
+            send(Msg::Finished)
+        }
         Err(e) if e.downcast_ref::<optflow_cli::run::Cancelled>().is_some() => send(Msg::Cancelled),
         Err(e) if cli.device == Device::Gpu && is_gpu_failure(&e) => {
             // the checkpoint of an earlier save is left as it is
@@ -388,6 +400,28 @@ pub fn run_job_on(
             send(Msg::Failed(text));
         }
     }
+}
+
+/// Writes `first_last` files of the run of `spec` into `dest` ([`crate::first_last::write`]); the
+/// first computed frame is read from the input again. `complete`: the run finished.
+pub fn write_first_last(spec: &JobSpec, dest: &Path, complete: bool) -> Result<()> {
+    let src = crate::source::Source::open(Path::new(&spec.source))?;
+    let bg = src.frame(spec.start)?;
+    let p = crate::first_last::Params {
+        source: &spec.source,
+        bg: &bg,
+        roi: &spec.roi,
+        scale: spec.settings.scale.max(1) as usize,
+        timing: crate::export::Timing {
+            start: spec.start,
+            step: spec.step.max(1),
+            fps: if spec.fps > 0.0 { spec.fps } else { 1.0 },
+        },
+        device: spec.settings.effective_device(),
+        filter_on: spec.settings.effective_filter(),
+        complete,
+    };
+    crate::first_last::write(&spec.out, dest, &p)
 }
 
 /// A running worker thread.
@@ -529,6 +563,7 @@ mod tests {
             out: base.join("app"),
             autosave: None,
             resume: false,
+            fps: 1.0,
         };
         let mut last = None;
         run_job(&spec, &AtomicBool::new(false), &mut |m| last = Some(m));
@@ -573,6 +608,7 @@ mod tests {
             out: std::env::temp_dir().join(format!("optflow-app-fail-{}", std::process::id())),
             autosave: None,
             resume: false,
+            fps: 1.0,
         };
         let mut msgs = vec![];
         run_job(&spec, &AtomicBool::new(false), &mut |m| msgs.push(m));

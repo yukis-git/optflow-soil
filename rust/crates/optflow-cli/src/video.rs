@@ -287,6 +287,97 @@ fn ffmpeg_version() -> Result<Option<(u32, u32)>> {
     Ok(parse_ffmpeg_version(&String::from_utf8_lossy(&out.stdout)))
 }
 
+/// RGB24 bytes of a `w` x `h` frame as grey levels (the conversion of every frame this module
+/// delivers).
+fn rgb_to_gray(rgb: &[u8], w: usize, h: usize, lut: &[f64; 256]) -> Gray {
+    let data = rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|p| luminance(lut[p[0] as usize], lut[p[1] as usize], lut[p[2] as usize]))
+        .collect();
+    Gray { w, h, data }
+}
+
+/// The frame rate of a video whose frames can be found by time: constant (`r_frame_rate` equal to
+/// `avg_frame_rate`, both given and not zero) and starting at time 0, so that frame `n` is at
+/// `n / fps`. `None` for any other stream, which has to be decoded from its start.
+pub fn constant_rate(path: &Path) -> Option<f64> {
+    let out = tool_command("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=r_frame_rate,avg_frame_rate,start_time",
+            "-of",
+            "default=noprint_wrappers=1",
+        ])
+        .arg(path)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    parse_constant_rate(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// [`constant_rate`] from the text `ffprobe` printed.
+fn parse_constant_rate(text: &str) -> Option<f64> {
+    let (mut r, mut avg, mut start) = (None, None, None);
+    for line in text.lines() {
+        match line.split_once('=') {
+            Some(("r_frame_rate", v)) => r = Some(v.trim().to_string()),
+            Some(("avg_frame_rate", v)) => avg = Some(v.trim().to_string()),
+            Some(("start_time", v)) => start = v.trim().parse::<f64>().ok(),
+            _ => {}
+        }
+    }
+    let rate = |v: &str| -> Option<(f64, f64)> {
+        let (n, d) = v.split_once('/')?;
+        let (n, d) = (n.parse::<f64>().ok()?, d.parse::<f64>().ok()?);
+        (n > 0.0 && d > 0.0).then_some((n, d))
+    };
+    let (a, b) = (rate(&r?)?, rate(&avg?)?);
+    // equal as fractions
+    if (a.0 * b.1 - b.0 * a.1).abs() > 0.0 {
+        return None;
+    }
+    let fps = a.0 / a.1;
+    // a stream that starts later than half a frame has its frames at other times
+    (start?.abs() < 0.5 / fps).then_some(fps)
+}
+
+/// Frame number `n` of the video as [`iter_video`] gives it, found by an input seek to the time
+/// `(n - 0.5) / fps` (half a frame before it, so that the frame shown at `n / fps` is the first one
+/// decoded) instead of decoding up to it. Only for a stream that [`constant_rate`] accepts, `fps`
+/// being its rate. The conversion to grey is that of [`iter_video`]; the frame is the same one,
+/// which is checked in the tests for every frame of a synthetic video.
+pub fn frame_at(path: &Path, n: i64, fps: f64) -> Result<Gray> {
+    let (w, h, turn) = probe(path)?;
+    let (w, h) = if turn.swaps_sides() { (h, w) } else { (w, h) };
+    let t = ((n as f64 - 0.5) / fps).max(0.0);
+    let out = tool_command("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-noautorotate", "-ss"])
+        .arg(format!("{t:.6}"))
+        .arg("-i")
+        .arg(path)
+        .args(["-map", "0:v:0", "-an", "-sn", "-dn", "-vf"])
+        .arg(video_filter(turn))
+        .args(passthrough_option(ffmpeg_version()?))
+        .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| spawn_error("ffmpeg", &e))?;
+    if !out.status.success() || out.stdout.len() != w * h * 3 {
+        bail!(
+            "ffmpeg failed to decode frame {n} of {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(rgb_to_gray(&out.stdout, w, h, &lut8()))
+}
+
 /// The frames `start, start + step, ...` below `stop` of a video, as grey levels. The iterator
 /// ends after an error item. Dropping it stops ffmpeg.
 pub struct VideoFrames {
@@ -377,19 +468,7 @@ impl VideoFrames {
 
     /// The raw frame in `buf` as grey levels.
     fn gray(&self) -> Gray {
-        let lut = &self.lut;
-        let data = self
-            .buf
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|p| luminance(lut[p[0] as usize], lut[p[1] as usize], lut[p[2] as usize]))
-            .collect();
-        Gray {
-            w: self.w,
-            h: self.h,
-            data,
-        }
+        rgb_to_gray(&self.buf, self.w, self.h, &self.lut)
     }
 
     /// ffmpeg closed its output: an error if it failed, otherwise the iteration is over.
@@ -458,6 +537,27 @@ impl Drop for VideoFrames {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_constant_rate_stream_from_time_zero_can_be_sought() {
+        let t = |r: &str, a: &str, st: &str| {
+            parse_constant_rate(&format!(
+                "r_frame_rate={r}\navg_frame_rate={a}\nstart_time={st}\n"
+            ))
+        };
+        assert_eq!(t("30/1", "30/1", "0.000000"), Some(30.0));
+        assert_eq!(t("60/2", "30/1", "0.000000"), Some(30.0));
+        assert_eq!(
+            t("30000/1001", "30000/1001", "0.010000").map(|f| f.round()),
+            Some(30.0)
+        );
+        assert_eq!(t("30/1", "2997/100", "0.000000"), None);
+        assert_eq!(t("30/1", "0/0", "0.000000"), None);
+        assert_eq!(t("0/0", "0/0", "0.000000"), None);
+        assert_eq!(t("30/1", "30/1", "0.500000"), None);
+        assert_eq!(t("30/1", "30/1", "N/A"), None);
+        assert_eq!(parse_constant_rate(""), None);
+    }
 
     #[test]
     fn ffmpeg_versions_are_read_from_the_first_line() {

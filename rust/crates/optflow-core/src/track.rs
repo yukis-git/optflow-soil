@@ -413,6 +413,47 @@ fn finish(
     }
 }
 
+/// Replaces the output of `res` by the one without the confidence filter: `ux`, `uy` become the
+/// unmasked displacement (`raw_ux`, `raw_uy`; in a sequence already composed to the first frame)
+/// kept inside the ROI `mask` (NaN outside it and wherever the raw field is NaN), and the strain
+/// is computed from that field with the code and the window of the masked path. `conf`, `fb`,
+/// `crack` and the timing are left as they are. Returns the pixels the masked output has a
+/// displacement at, i.e. the pixels that pass the confidence filter, the guard and the ROI (what
+/// `valid.npy` of the masked output marks). The tracking is not touched: this runs on a finished
+/// result.
+pub fn without_confidence_filter(
+    res: &mut TrackResult,
+    cfg: &Config,
+    mask: Option<&Image<bool>>,
+    opts: StrainOpts,
+) -> Image<bool> {
+    let valid = Image::from_vec(
+        res.ux.w,
+        res.ux.h,
+        res.ux.data.iter().map(|v| v.is_finite()).collect(),
+    );
+    let inside = |u: &Image<f32>| match mask {
+        Some(m) => Image::from_vec(
+            u.w,
+            u.h,
+            u.data
+                .iter()
+                .zip(&m.data)
+                .map(|(&v, &keep)| if keep { v } else { f32::NAN })
+                .collect(),
+        ),
+        None => u.clone(),
+    };
+    let (ux, uy) = (inside(&res.raw_ux), inside(&res.raw_uy));
+    let (_, strain_band) = stage_bands(cfg, ux.h, band_rows(ux.w));
+    res.strain = prof::time(Stage::Strain, || {
+        strain_banded(&ux, &uy, cfg.strain_win, strain_band, opts)
+    });
+    res.ux = ux;
+    res.uy = uy;
+    valid
+}
+
 // ---------------------------------------------------------------------------------------------
 // pair
 

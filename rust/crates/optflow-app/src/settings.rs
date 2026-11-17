@@ -38,6 +38,11 @@ pub struct Settings {
     /// to within the tolerances of the GPU spec but not bit for bit, so it is part of what
     /// identifies a run; see [`Settings::effective_device`].
     pub device: Device,
+    /// The confidence filter of the output (on: what every earlier version wrote). Off: the
+    /// displacement and the strain are written for every pixel of the ROI, low confidence or not
+    /// (`optflow_cli::args::Cli::unfiltered`). Not a key of the configuration, and the tracking
+    /// does not depend on it. The crack model keeps it on; see [`Settings::effective_filter`].
+    pub conf_filter: bool,
 }
 
 impl Settings {
@@ -54,6 +59,7 @@ impl Settings {
             scale: 1,
             crack: false,
             device: Device::Cpu,
+            conf_filter: true,
         };
         match p {
             Preset::Standard => base,
@@ -69,10 +75,11 @@ impl Settings {
 
     /// The preset these values equal, if any.
     pub fn matching_preset(&self) -> Option<Preset> {
-        // the crack toggle and the device are independent of the presets
+        // the crack toggle, the device and the filter are independent of the presets
         let plain = Settings {
             crack: false,
             device: Device::Cpu,
+            conf_filter: true,
             ..self.clone()
         };
         [Preset::Recommended, Preset::Standard]
@@ -87,6 +94,12 @@ impl Settings {
         } else {
             self.device
         }
+    }
+
+    /// Whether the run writes the confidence-filtered output: the crack model has no output
+    /// without the filter, so it keeps it whatever was chosen.
+    pub fn effective_filter(&self) -> bool {
+        self.conf_filter || self.crack
     }
 
     /// The `--set key=value` overrides (every value of this struct is passed, so the run does not
@@ -168,6 +181,22 @@ mod tests {
         assert!(!s.overrides().iter().any(|o| o.contains("device")));
         s.crack = true;
         assert_eq!(s.effective_device(), Device::Cpu);
+    }
+
+    #[test]
+    fn the_filter_is_on_by_default_not_a_preset_and_always_on_with_the_crack_model() {
+        let mut s = Settings::preset(Preset::Recommended);
+        assert!(s.conf_filter && s.effective_filter());
+        s.conf_filter = false;
+        assert!(!s.effective_filter());
+        assert_eq!(s.matching_preset(), Some(Preset::Recommended));
+        // not a key of the configuration: the tracking does not depend on it
+        assert_eq!(
+            s.overrides(),
+            Settings::preset(Preset::Recommended).overrides()
+        );
+        s.crack = true;
+        assert!(s.effective_filter());
     }
 
     #[test]

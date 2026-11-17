@@ -114,6 +114,7 @@ impl Work {
             out: self.base.join(name),
             autosave: None,
             resume: false,
+            fps: 1.0,
         }
     }
 }
@@ -328,6 +329,65 @@ fn chain_with_averaging() {
 fn chain_with_a_roi_and_no_averaging() {
     let w = Work::new("chain-roi");
     exercise(&w, "c", &w.spec("whole", chain_settings(0), true));
+}
+
+#[test]
+fn hybrid_without_the_confidence_filter() {
+    let w = Work::new("hybrid-unfiltered");
+    let s = Settings {
+        conf_filter: false,
+        ..hybrid_settings()
+    };
+    let spec = w.spec("whole", s, true);
+    exercise(&w, "h", &spec);
+    // the run must really differ from the filtered one: more pixels have a displacement
+    let on = w.spec("on", hybrid_settings(), true);
+    assert_eq!(run(&on, None).0, End::Finished);
+    let k = *list_frames(&on.out).last().unwrap();
+    let f_on = optflow_app::fields::Fields::load(&on.out, k).unwrap();
+    assert_eq!(run(&spec, None).0, End::Finished);
+    let f_off = optflow_app::fields::Fields::load(&spec.out, k).unwrap();
+    let n = |f: &optflow_app::fields::Fields| (0..f.w * f.h).filter(|&i| f.has_value(i)).count();
+    assert!(n(&f_off) > n(&f_on), "{} vs {}", n(&f_off), n(&f_on));
+    assert!(spec.out.join("confidence_filter.json").is_file());
+    assert!(!on.out.join("confidence_filter.json").exists());
+    // the same pixels pass the filter, and the tracking files are the same bytes
+    assert!((0..f_on.w * f_on.h).all(|i| f_on.is_valid(i) == f_off.is_valid(i)));
+    for name in ["conf.npy", "valid.npy", "fb.npy"] {
+        let (a, b) = (
+            std::fs::read(on.out.join(format!("frame_{k:05}")).join(name)).unwrap(),
+            std::fs::read(spec.out.join(format!("frame_{k:05}")).join(name)).unwrap(),
+        );
+        assert!(a == b, "{name}");
+    }
+}
+
+#[test]
+fn chain_without_the_confidence_filter() {
+    let w = Work::new("chain-unfiltered");
+    let s = Settings {
+        conf_filter: false,
+        ..chain_settings(0)
+    };
+    exercise(&w, "c", &w.spec("whole", s, true));
+}
+
+#[test]
+fn a_checkpoint_of_the_other_filter_setting_is_refused() {
+    let w = Work::new("filter-refuse");
+    let mut spec = w.spec("run", chain_settings(1), true);
+    spec.autosave = Some(ON_STOP);
+    assert_eq!(run(&spec, Some(3)).0, End::Cancelled);
+    spec.resume = true;
+    spec.settings.conf_filter = false;
+    let (end, frames, _) = run(&spec, None);
+    assert!(
+        matches!(&end, End::Failed(t) if t.contains("信頼度フィルター") && t.contains("再開できません")),
+        "{end:?}"
+    );
+    assert!(frames.is_empty());
+    spec.settings.conf_filter = true;
+    assert_eq!(run(&spec, None).0, End::Finished);
 }
 
 #[test]
@@ -807,6 +867,19 @@ mod gpu {
         let spec = w.spec("whole", s, true);
         assert_ran_on_gpu(&w, &spec);
         exercise(&w, "h", &spec);
+    }
+
+    #[test]
+    fn gpu_hybrid_without_the_confidence_filter() {
+        if !available() {
+            return;
+        }
+        let w = Work::new("gpu-unfiltered");
+        let s = on_gpu(Settings {
+            conf_filter: false,
+            ..hybrid_settings()
+        });
+        exercise(&w, "h", &w.spec("whole", s, true));
     }
 
     #[test]

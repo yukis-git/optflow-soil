@@ -261,6 +261,7 @@ mod tests {
             fb: None,
             cod: None,
             csd: None,
+            valid: None,
         }
     }
 

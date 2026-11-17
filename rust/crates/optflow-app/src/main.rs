@@ -14,6 +14,8 @@ use optflow_app::device::{self, Gpu};
 use optflow_app::export::{self, Timing};
 use optflow_app::fields::Fields;
 use optflow_app::job::{self, JobSpec, Msg, Running};
+use optflow_app::preview::{FrameWorker, Purpose};
+use optflow_app::range;
 use optflow_app::resume::{self, Mismatch};
 use optflow_app::roi_edit::{self, Cursor, Drag, Handle};
 use optflow_app::settings::{Preset, Settings};
@@ -64,6 +66,8 @@ struct Script {
     /// Choose the GPU before the run, and after the stop try a resume on the other device.
     gpu: bool,
     checked_device: bool,
+    /// The drive of the v0.4 features: the frame slider, the filter off, the first-to-last export.
+    v040: bool,
 }
 
 /// Test mode (`--selftest SOURCE "x,y;x,y;..." OUTDIR`): the window does what a user would do,
@@ -87,6 +91,20 @@ struct App {
     source: Option<Source>,
     first: Option<Arc<Gray8>>,
     first_tex: Option<egui::TextureHandle>,
+    /// The source frame `first` is (the start frame, when the picture has caught up with it).
+    first_start: i64,
+    // the frame slider of "2. 範囲と領域": a chosen source frame shown on the canvas
+    frames: FrameWorker,
+    /// The frame the slider is on.
+    pick: i64,
+    /// The slider (or a button beside it) is in use: the canvas shows `pick`.
+    pick_hot: bool,
+    pick_asked: Option<i64>,
+    start_asked: Option<i64>,
+    /// The frame read for the slider: its picture, and the texture of it.
+    pick_gray: Option<(i64, Arc<Gray8>)>,
+    pick_tex: Option<(i64, egui::TextureHandle)>,
+    pick_error: Option<String>,
     roi: Vec<(f64, f64)>,
     start: i64,
     /// 0: to the end.
@@ -156,6 +174,13 @@ struct App {
     btn_ask_cancel: Option<egui::Rect>,
     btn_device_cpu: Option<egui::Rect>,
     btn_device_gpu: Option<egui::Rect>,
+    btn_filter: Option<egui::Rect>,
+    btn_pick: Option<egui::Rect>,
+    /// The run on show finished (not stopped or failed).
+    run_complete: bool,
+    btn_first_last: Option<egui::Rect>,
+    btn_pick_start: Option<egui::Rect>,
+    btn_pick_end: Option<egui::Rect>,
     /// Whether the machine has a Metal GPU (looked for on a thread of its own at startup).
     gpu: Gpu,
     gpu_rx: Option<Receiver<Gpu>>,
@@ -199,6 +224,18 @@ impl App {
             source: None,
             first: None,
             first_tex: None,
+            first_start: 0,
+            frames: {
+                let c = cc.egui_ctx.clone();
+                FrameWorker::start(Arc::new(move || c.request_repaint()))
+            },
+            pick: 0,
+            pick_hot: false,
+            pick_asked: None,
+            start_asked: None,
+            pick_gray: None,
+            pick_tex: None,
+            pick_error: None,
             roi: vec![],
             start: 0,
             stop: 0,
@@ -252,6 +289,12 @@ impl App {
             btn_ask_cancel: None,
             btn_device_cpu: None,
             btn_device_gpu: None,
+            btn_filter: None,
+            btn_pick: None,
+            run_complete: false,
+            btn_first_last: None,
+            btn_pick_start: None,
+            btn_pick_end: None,
             gpu,
             gpu_rx,
         }
@@ -300,6 +343,9 @@ impl App {
                 let img = egui::ColorImage::from_gray([w, h], &data);
                 self.first_tex = Some(ctx.load_texture("first", img, egui::TextureOptions::LINEAR));
                 self.first = Some(Arc::new(g));
+                self.first_start = self.start.max(0);
+                self.pick = self.start.max(0);
+                self.forget_pick();
                 true
             }
             Err(e) => {
@@ -307,6 +353,84 @@ impl App {
                 false
             }
         }
+    }
+
+    /// Drops what the slider showed (another input, or another start frame).
+    fn forget_pick(&mut self) {
+        self.pick_hot = false;
+        self.pick_asked = None;
+        self.pick_gray = None;
+        self.pick_tex = None;
+        self.pick_error = None;
+    }
+
+    /// Takes in the frames the reading thread finished.
+    fn poll_frames(&mut self, ctx: &egui::Context) {
+        while let Ok(r) = self.frames.rx.try_recv() {
+            match r {
+                Ok(l) => {
+                    let img = egui::ColorImage::from_gray([l.small.0, l.small.1], &l.small.2);
+                    match l.purpose {
+                        Purpose::Slider => {
+                            let tex = ctx.load_texture("pick", img, egui::TextureOptions::LINEAR);
+                            self.pick_tex = Some((l.n, tex));
+                            // a frame found by a time seek is not used as the reference
+                            self.pick_gray = (!l.seeked).then_some((l.n, l.gray));
+                            self.pick_error = None;
+                        }
+                        Purpose::Start => {
+                            // a start frame that is no longer the start, or a picture under a run,
+                            // is of no use
+                            if l.n == self.start.max(0) && self.run_dir.is_none() {
+                                self.first_tex = Some(ctx.load_texture(
+                                    "first",
+                                    img,
+                                    egui::TextureOptions::LINEAR,
+                                ));
+                                self.first = Some(l.gray);
+                                self.first_start = l.n;
+                            }
+                            self.start_asked = None;
+                        }
+                    }
+                }
+                Err((purpose, n, text)) => match purpose {
+                    Purpose::Slider => {
+                        if self.pick_asked == Some(n) {
+                            self.pick_error = Some(text);
+                        }
+                    }
+                    Purpose::Start => self.start_asked = None,
+                },
+            }
+        }
+    }
+
+    /// Makes the canvas follow the start frame when the number was changed: from the frame the
+    /// slider already has, else read on the reading thread. Under a run the picture stays.
+    fn follow_start(&mut self, ctx: &egui::Context) {
+        let want = self.start.max(0);
+        let (Some(s), true) = (
+            &self.source,
+            self.run_dir.is_none() && self.running.is_none(),
+        ) else {
+            return;
+        };
+        if self.first.is_none() || self.first_start == want || self.start_asked == Some(want) {
+            return;
+        }
+        if let Some((n, g)) = self.pick_gray.clone().filter(|(n, _)| *n == want) {
+            let factor = view::display_factor(g.w, g.h, max_texture_side(ctx));
+            let (w, h, data) = view::shrink_gray(&g, factor);
+            let img = egui::ColorImage::from_gray([w, h], &data);
+            self.first_tex = Some(ctx.load_texture("first", img, egui::TextureOptions::LINEAR));
+            self.first = Some(g);
+            self.first_start = n;
+            return;
+        }
+        let factor = view::display_factor(s.w, s.h, max_texture_side(ctx));
+        self.frames.request(s, want, factor, Purpose::Start);
+        self.start_asked = Some(want);
     }
 
     /// Looks in the output folder for a stopped run and offers it. With `adopt`, and a ROI not yet
@@ -446,6 +570,7 @@ impl App {
                 ..Policy::default()
             }),
             resume: false,
+            fps: if self.fps > 0.0 { self.fps } else { 1.0 },
         })
     }
 
@@ -467,7 +592,23 @@ impl App {
     }
 
     fn launch(&mut self, ctx: &egui::Context, spec: JobSpec) {
+        if let Err(why) = range::check(
+            spec.source_count,
+            spec.start,
+            spec.stop.unwrap_or(0),
+            spec.step,
+        ) {
+            self.error = Some(why);
+            return;
+        }
+        // the picture the results lie on is the start frame, also when it was changed a moment ago
+        if self.first_start != spec.start.max(0) {
+            if let Some(s) = self.source.clone() {
+                self.load_first_frame(ctx, &s);
+            }
+        }
         self.close_results();
+        self.run_complete = false;
         self.offer = None;
         self.ask = Ask::None;
         self.stop_asked = false;
@@ -509,6 +650,7 @@ impl App {
                 Msg::Saved(info) => self.last_save = Some((Instant::now(), info)),
                 Msg::Warn(w) => self.warnings.push(w),
                 Msg::Finished => {
+                    self.run_complete = true;
                     self.notice = Some("完了しました。".into());
                     done = true;
                 }
@@ -632,6 +774,38 @@ impl App {
         }
     }
 
+    /// Whether the run on show was made without the confidence filter.
+    fn run_without_filter(&self) -> bool {
+        match (&self.spec, &self.run_dir) {
+            (Some(s), Some(d)) => &s.out == d && !s.settings.effective_filter(),
+            _ => false,
+        }
+    }
+
+    /// The scripted drive's numbers: of the ROI pixels of the last result, the share that passes the
+    /// confidence filter and the share that has a displacement.
+    fn report_fraction(&self, what: &str) {
+        let (Some(run), Some(st)) = (&self.run_dir, self.series.last()) else {
+            return;
+        };
+        let Ok(f) = Fields::load(run, st.k) else {
+            return;
+        };
+        let roi = optflow_cli::polygon::polygon_mask(f.w, f.h, &self.roi, 1).data;
+        let n = roi.iter().filter(|&&r| r).count().max(1) as f64;
+        let count = |g: &dyn Fn(usize) -> bool| (0..f.w * f.h).filter(|&i| roi[i] && g(i)).count();
+        eprintln!(
+            "script: numbers filter {what}: frame {} valid fraction {:.4}, finite ux fraction {:.4}, stats valid {:.4}, gmax p50/p95/p99 {:.4}/{:.4}/{:.4}",
+            st.k,
+            count(&|i| f.is_valid(i)) as f64 / n,
+            count(&|i| f.has_value(i)) as f64 / n,
+            st.valid_frac,
+            st.g50,
+            st.g95,
+            st.g99
+        );
+    }
+
     fn view_busy(&self) -> bool {
         self.view_asked != self.view_done
     }
@@ -666,6 +840,46 @@ impl App {
         });
         self.export_rx = Some(rx);
         self.notice = Some("PNGを保存中...".into());
+    }
+
+    /// Writes the change from the first to the last computed frame of the run on show into a
+    /// chosen folder ([`optflow_app::first_last`]).
+    fn start_first_last_export(&mut self, ctx: &egui::Context, dest: PathBuf) {
+        let (Some(run), Some(src), Some(bg)) = (
+            self.run_dir.clone(),
+            self.source.clone(),
+            self.first.clone(),
+        ) else {
+            return;
+        };
+        let (roi, t) = (self.roi.clone(), self.timing());
+        let (scale, device) = (
+            self.settings.scale.max(1) as usize,
+            self.settings.effective_device(),
+        );
+        let (filter_on, complete) = (!self.run_without_filter(), self.run_complete);
+        let (tx, rx) = channel();
+        let c = ctx.clone();
+        std::thread::spawn(move || {
+            let _awake = power::keep_running("optflow export");
+            let p = optflow_app::first_last::Params {
+                source: &src.path,
+                bg: &bg,
+                roi: &roi,
+                scale,
+                timing: t,
+                device,
+                filter_on,
+                complete,
+            };
+            let r = optflow_app::first_last::write(&run, &dest, &p)
+                .map(|()| format!("最初→最後の分布を書き出しました: {}", dest.display()))
+                .map_err(|e| format!("最初→最後の分布を書き出せません: {e:#}"));
+            let _ = tx.send(r);
+            c.request_repaint();
+        });
+        self.export_rx = Some(rx);
+        self.notice = Some("最初→最後の分布を書き出し中...".into());
     }
 
     fn start_csv_export(&mut self, ctx: &egui::Context, dest: PathBuf) {
@@ -764,6 +978,7 @@ impl App {
                 );
                 ui.end_row();
             });
+            self.range_picker(ui);
             ui.add(
                 egui::Label::new(
                     "画像上をドラッグすると四角形の ROI を作ります(クリックで頂点を順に置くこともできます)。\
@@ -805,10 +1020,15 @@ impl App {
                 for p in [Preset::Recommended, Preset::Standard] {
                     let on = self.settings.matching_preset() == Some(p);
                     if ui.selectable_label(on, p.label()).clicked() {
-                        let (scale, device) = (self.settings.scale, self.settings.device);
+                        let (scale, device, filter) = (
+                            self.settings.scale,
+                            self.settings.device,
+                            self.settings.conf_filter,
+                        );
                         self.settings = Settings::preset(p);
                         self.settings.scale = scale;
                         self.settings.device = device;
+                        self.settings.conf_filter = filter;
                     }
                 }
                 if self.settings.matching_preset().is_none() {
@@ -818,6 +1038,7 @@ impl App {
             if device::BUILT {
                 self.device_choice(ui);
             }
+            self.filter_choice(ui);
             egui::CollapsingHeader::new("詳細設定").show(ui, |ui| {
                 let s = &mut self.settings;
                 egui::Grid::new("adv").num_columns(2).show(ui, |ui| {
@@ -1009,6 +1230,13 @@ impl App {
                     self.start_csv_export(ctx, d);
                 }
             }
+            let b = ui.button("最初→最後の分布を書き出す…");
+            self.btn_first_last = Some(b.rect);
+            if b.clicked() {
+                if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                    self.start_first_last_export(ctx, d);
+                }
+            }
             let ready = !self.view_busy();
             if ui
                 .add_enabled(ready, egui::Button::new("表示中の画像を PNG で保存…"))
@@ -1019,6 +1247,90 @@ impl App {
         });
         if let Some(r) = &self.run_dir {
             ui.add(egui::Label::new(format!("結果フォルダ: {}", r.display())).wrap());
+        }
+    }
+
+    /// The line that says which frames are computed, the slider that shows any frame of the input
+    /// on the canvas, and the buttons that take the shown frame as the start or the end.
+    fn range_picker(&mut self, ui: &mut egui::Ui) {
+        let count = self.source.as_ref().and_then(|s| s.count);
+        let bad = range::check(count, self.start, self.stop, self.step).is_err();
+        let line = range::text(count, self.start, self.stop, self.step, self.fps);
+        let line = if bad {
+            RichText::new(line).color(Color32::from_rgb(210, 40, 40))
+        } else {
+            RichText::new(line)
+        };
+        ui.add(egui::Label::new(line).wrap());
+        ui.label("終了フレームの番号のフレームは含みません。");
+        let (Some(s), None) = (self.source.clone(), &self.run_dir) else {
+            return;
+        };
+        let Some(n) = s.count.filter(|&n| n >= 1) else {
+            return;
+        };
+        self.pick = self.pick.clamp(0, n as i64 - 1);
+        let mut hot = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("確認するフレーム");
+            ui.spacing_mut().slider_width = 200.0;
+            let r = ui.add(egui::Slider::new(&mut self.pick, 0..=n as i64 - 1));
+            self.btn_pick = Some(r.rect);
+            hot |= r.hovered() || r.dragged() || r.has_focus();
+        });
+        ui.horizontal_wrapped(|ui| {
+            let a = ui.button("このフレームを開始に");
+            self.btn_pick_start = Some(a.rect);
+            hot |= a.hovered();
+            if a.clicked() {
+                range::set_start(&mut self.start, self.pick);
+            }
+            let b = ui.button("このフレームを終了に");
+            self.btn_pick_end = Some(b.rect);
+            hot |= b.hovered();
+            if b.clicked() {
+                range::set_end(&mut self.stop, self.pick);
+            }
+        });
+        self.pick_hot = hot;
+        if hot && self.pick_asked != Some(self.pick) {
+            let factor = view::display_factor(s.w, s.h, 2560);
+            self.frames.request(&s, self.pick, factor, Purpose::Slider);
+            self.pick_asked = Some(self.pick);
+        }
+        if hot {
+            if let Some(e) = &self.pick_error {
+                ui.colored_label(Color32::from_rgb(210, 40, 40), e);
+            } else if self.pick_tex.as_ref().map(|t| t.0) != Some(self.pick) {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("読み込み中…");
+                });
+            }
+        }
+    }
+
+    /// "信頼度フィルター": on writes the pixels of enough confidence only (as every earlier
+    /// version), off writes every pixel of the ROI.
+    fn filter_choice(&mut self, ui: &mut egui::Ui) {
+        let crack = self.settings.crack;
+        let mut on = self.settings.effective_filter();
+        let r = ui.add_enabled(!crack, egui::Checkbox::new(&mut on, "信頼度フィルター"));
+        self.btn_filter = Some(r.rect);
+        if r.changed() && !crack {
+            self.settings.conf_filter = on;
+        }
+        let note = if crack {
+            Some("亀裂モデルでは信頼度フィルターは ON のままです。")
+        } else if !on {
+            Some(
+                "OFF: 信頼度が低い画素も含め、ROI 内の全画素の変位とひずみを出力します(有効率は信頼度で数えます)",
+            )
+        } else {
+            None
+        };
+        if let Some(n) = note {
+            ui.add(egui::Label::new(n).wrap());
         }
     }
 
@@ -1195,10 +1507,15 @@ impl App {
         self.image_area = Some((rect, s));
         let painter = ui.painter_at(rect);
         let first_size = (first.w, first.h);
+        let shown_pick = self
+            .pick_tex
+            .as_ref()
+            .filter(|_| self.pick_hot && self.run_dir.is_none())
+            .map(|(_, t)| t);
         let tex = if self.run_dir.is_some() && self.tex.is_some() {
             self.tex.as_ref()
         } else {
-            self.first_tex.as_ref()
+            shown_pick.or(self.first_tex.as_ref())
         };
         if let Some(t) = tex {
             painter.image(
@@ -1355,6 +1672,9 @@ impl App {
             let min = self.series.iter().map(|s| s.valid_frac).fold(f64::INFINITY, f64::min);
             ui.label(format!("全フレーム平均 {:.1} %  最小 {:.1} %   平均信頼度 {:.2}   gmax p50/p95/p99 = {:.4} / {:.4} / {:.4}", mean * 100.0, min * 100.0, st.mean_conf, st.g50, st.g95, st.g99));
         });
+        if self.run_without_filter() {
+            ui.label("信頼度フィルター: OFF(ROI 内の全画素を表示しています。有効率と平均信頼度は信頼度で数え、gmax の p50/p95/p99 は表示している全画素で計算しています)");
+        }
         if let Some(c) = &self.crack {
             let (cod, csd) = c.medians();
             ui.label(format!(
@@ -1731,6 +2051,138 @@ impl App {
             );
         };
         match s.stage {
+            0 if s.v040 => {
+                self.base_out = s.out.join("optflow_出力");
+                self.out_picked = true;
+                let r = Source::open(&s.source).map(|src| (src, None));
+                self.set_source(ctx, r);
+                self.settings = optflow_app::settings::Settings::preset(
+                    optflow_app::settings::Preset::Recommended,
+                );
+                s.wait = 10;
+                s.stage = 200;
+            }
+            200 => {
+                Self::screenshot(ctx, &s.out, "v01_opened");
+                let first = self.first.clone().expect("a source is open");
+                let (w, h) = (first.w as f64, first.h as f64);
+                s.events.extend(drag_events(
+                    at(self, 0.25 * w, 0.25 * h),
+                    at(self, 0.75 * w, 0.75 * h),
+                    primary,
+                ));
+                s.stage = 201;
+                s.wait = 6;
+            }
+            201 => {
+                assert_eq!(self.roi.len(), 4, "the drag made a rectangle");
+                // a click at four fifths of the slider rail, as a user's
+                let r = self.btn_pick.expect("the frame slider is on the screen");
+                let p = egui::pos2(r.min.x + 0.8 * 200.0, r.center().y);
+                s.events.extend(click_events(p, primary, 1));
+                s.stage = 202;
+                s.wait = 4;
+            }
+            202 => {
+                let ready = self.pick_tex.as_ref().is_some_and(|t| t.0 == self.pick);
+                if self.pick > 0 && self.pick_hot && ready {
+                    log(self, &format!("the slider is on frame {}", self.pick));
+                    assert_eq!(self.start, 0, "the start did not move");
+                    Self::screenshot(ctx, &s.out, "v02_slider_later_frame");
+                    s.wait = 8;
+                    s.stage = 203;
+                }
+            }
+            203 => {
+                let b = self.btn_pick_end.expect("the end button is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.stage = 204;
+                s.wait = 6;
+            }
+            204 => {
+                assert_eq!(self.stop, self.pick + 1, "the frame became the last one");
+                eprintln!(
+                    "script: {}",
+                    range::text(
+                        self.source.as_ref().and_then(|x| x.count),
+                        self.start,
+                        self.stop,
+                        self.step,
+                        self.fps
+                    )
+                );
+                Self::screenshot(ctx, &s.out, "v03_end_set");
+                let b = self.btn_filter.expect("the filter choice is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.stage = 205;
+                s.wait = 8;
+            }
+            205 => {
+                assert!(!self.settings.conf_filter, "the checkbox switched it off");
+                Self::screenshot(ctx, &s.out, "v04_filter_off_setting");
+                let b = self.btn_start.expect("the start button is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.stage = 206;
+                s.wait = 6;
+            }
+            206 | 209 => {
+                if self.running.is_none()
+                    && !self.series.is_empty()
+                    && self.tex.is_some()
+                    && !self.view_busy()
+                {
+                    let off = s.stage == 206;
+                    eprintln!("script: error {:?}; notice {:?}", self.error, self.notice);
+                    self.report_fraction(if off { "OFF" } else { "ON" });
+                    Self::screenshot(
+                        ctx,
+                        &s.out,
+                        if off { "v05_off_gmax" } else { "v07_on_gmax" },
+                    );
+                    s.wait = 8;
+                    s.stage = if off { 207 } else { 210 };
+                }
+            }
+            207 => {
+                self.overlay = Overlay::Ux;
+                s.wait = 10;
+                s.stage = 208;
+            }
+            208 => {
+                if !self.view_busy() {
+                    Self::screenshot(ctx, &s.out, "v06_off_ux");
+                    let b = self.btn_filter.expect("the filter choice is on the screen");
+                    s.events.extend(click_events(b.center(), primary, 1));
+                    s.stage = 211;
+                    s.wait = 8;
+                }
+            }
+            211 => {
+                assert!(self.settings.conf_filter, "the checkbox switched it on");
+                self.overlay = Overlay::Gmax;
+                let b = self.btn_start.expect("the start button is on the screen");
+                s.events.extend(click_events(b.center(), primary, 1));
+                s.stage = 209;
+                s.wait = 6;
+            }
+            210 => {
+                let run = self.run_dir.clone().expect("a run is shown");
+                self.start_first_last_export(ctx, s.out.join("manual_first_last"));
+                s.stage = 212;
+                s.wait = 6;
+                eprintln!("script: first_last of {}", run.display());
+            }
+            212 => {
+                if self.export_rx.is_none() {
+                    eprintln!("script: notice {:?}", self.notice);
+                    let a = s.out.join("optflow_出力/run_001/first_last/gmax.png");
+                    let b = s.out.join("optflow_出力/run_002/first_last/gmax.png");
+                    let _ = std::fs::copy(a, s.out.join("v08_first_last_gmax_off.png"));
+                    let _ = std::fs::copy(b, s.out.join("v09_first_last_gmax_on.png"));
+                    s.wait = 5;
+                    s.stage = 999;
+                }
+            }
             0 if s.reopen => {
                 self.base_out = s.out.join("optflow_出力");
                 self.out_picked = true;
@@ -2120,6 +2572,8 @@ fn fmt_secs(s: f64) -> String {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        self.poll_frames(ctx);
+        self.follow_start(ctx);
         if let Some(g) = self.gpu_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.gpu = g;
             self.gpu_rx = None;
@@ -2233,6 +2687,7 @@ fn main() -> eframe::Result<()> {
                 quit_after_stop: rest.iter().any(|a| a == "quit"),
                 gpu: rest.iter().any(|a| a == "gpu"),
                 reopen: rest.iter().any(|a| a == "reopen"),
+                v040: rest.iter().any(|a| a == "v040"),
                 ..Script::default()
             })
         }

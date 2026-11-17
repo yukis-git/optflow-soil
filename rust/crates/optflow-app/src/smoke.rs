@@ -94,6 +94,7 @@ pub fn run_smoke(out: &Path) -> Result<String> {
         out: out.join("run"),
         autosave: None,
         resume: false,
+        fps: 1.0,
     };
     let mut stats: Vec<FrameStats> = vec![];
     let mut last = None;

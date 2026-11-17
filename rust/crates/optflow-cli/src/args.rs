@@ -60,6 +60,9 @@ pub struct Cli {
     pub out: PathBuf,
     pub png: bool,
     pub raw: bool,
+    /// Library only (no command-line option): write the displacement and strain without the
+    /// confidence filter (`track::without_confidence_filter`). The desktop app sets it.
+    pub unfiltered: bool,
 }
 
 /// `--crop`: whether `--roi` also crops the images to the ROI's bounding box plus a margin.
@@ -366,6 +369,7 @@ pub fn parse(args: &[String]) -> Result<Parsed, String> {
         out: out.expect("--out was checked"),
         png,
         raw,
+        unfiltered: false,
     })))
 }
 

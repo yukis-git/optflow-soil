@@ -11,7 +11,9 @@ use optflow_core::engine::{CpuEngine, FineEngine};
 use optflow_core::image::Image;
 use optflow_core::poc::capture_range;
 use optflow_core::track::resume::{resumable_sequence, SavedRun};
-use optflow_core::track::{track_pair_owned_with, StrainOpts, Timing, TrackError, TrackResult};
+use optflow_core::track::{
+    track_pair_owned_with, without_confidence_filter, StrainOpts, Timing, TrackError, TrackResult,
+};
 
 use crate::args::{Cli, Command, CropMode, Device};
 use crate::checkpoint::{self, Checkpointing, SaveInfo};
@@ -64,16 +66,30 @@ fn placed<'a>(
 /// `io::save_result`, and with `--raw` the unmasked displacement as `raw_ux.npy`, `raw_uy.npy`;
 /// `res` is the result of tracking `crop` of the `size` image and is written as full-size maps
 /// (NaN outside the crop, confidence 0).
+///
+/// With `cli.unfiltered` the displacement and the strain are first replaced by those without the
+/// confidence filter (inside the ROI `mask` of what is tracked), in `res` itself, so that what a
+/// caller sees afterwards is what is written; `valid.npy` keeps the meaning of the filtered
+/// output.
 fn save(
     cli: &Cli,
     dir: &Path,
-    res: &TrackResult,
+    res: &mut TrackResult,
     crop: Option<&Crop>,
     size: (usize, usize),
+    cfg: &optflow_core::config::Config,
+    mask: Option<&Image<bool>>,
 ) -> Result<()> {
-    io::save_result_placed(dir, res, cli.device == Device::Gpu, &|im, fill| {
-        placed(crop, size, im, fill)
-    })?;
+    let valid = cli
+        .unfiltered
+        .then(|| without_confidence_filter(res, cfg, mask, WRITTEN_STRAIN));
+    io::save_result_valid(
+        dir,
+        res,
+        cli.device == Device::Gpu,
+        &|im, fill| placed(crop, size, im, fill),
+        valid.as_ref(),
+    )?;
     if let Some(fb) = &res.fb {
         // hybrid sequences: the frames each pixel was carried by the adjacent leg (0 = direct)
         let as_f32 = Image::from_vec(fb.w, fb.h, fb.data.iter().map(|&v| v as f32).collect());
@@ -91,6 +107,10 @@ fn save(
     }
     Ok(())
 }
+
+/// The file a run without the confidence filter leaves in its folder (a run with the filter has
+/// none: its output is that of every earlier version).
+pub const UNFILTERED_FILE: &str = "confidence_filter.json";
 
 /// The GPU engine could not be started (no Metal device, a shader that does not compile, a build
 /// without the GPU backend): `--device gpu` is a request, never a hint, so the run stops.
@@ -355,6 +375,11 @@ fn run_inner(
              baseline solve, which the GPU engine does not return); use --device cpu"
         );
     }
+    if cli.unfiltered && cfg.is_xdic() {
+        // the crack model's displacement is not the raw field (it is corrected on each side of the
+        // crack line): there is no unfiltered counterpart
+        bail!("crack_model 'xdic' cannot write the displacement without the confidence filter");
+    }
     let made;
     let engine: &dyn FineEngine = match over {
         Some(e) => e,
@@ -367,6 +392,11 @@ fn run_inner(
     let config_path = cli.out.join("config.json");
     fs::write(&config_path, settings::config_json(&cfg))
         .with_context(|| format!("cannot write {}", config_path.display()))?;
+    if cli.unfiltered {
+        let path = cli.out.join(UNFILTERED_FILE);
+        fs::write(&path, "{\"confidence_filter\": false}\n")
+            .with_context(|| format!("cannot write {}", path.display()))?;
+    }
     if cli.png {
         hooks.warn(
             "warning: --png is accepted for compatibility but not supported: no maps are written",
@@ -391,7 +421,7 @@ fn run_inner(
             let mask = cut_mask(crop.as_ref(), mask);
             let note = capture_warning(&cfg, i1.h, i1.w);
             // the images are released once the fine stage is done, the ROI after the border check
-            let res =
+            let mut res =
                 track_pair_owned_with(engine, i1, i2, &cfg, mask.as_ref(), None, WRITTEN_STRAIN)?;
             if let Some(note) = &note {
                 hooks.warn(note);
@@ -403,8 +433,16 @@ fn run_inner(
                     hooks.warn(crop::WARNING);
                 }
             }
+            save(
+                cli,
+                &cli.out,
+                &mut res,
+                crop.as_ref(),
+                (w, h),
+                &cfg,
+                mask.as_ref(),
+            )?;
             drop(mask);
-            save(cli, &cli.out, &res, crop.as_ref(), (w, h))?;
             hooks.say(&format!("done: {}\n", timing_text(&res.timing, cli.device)))
         }
         Command::Seq {
@@ -633,7 +671,7 @@ fn run_seq(
     let mut warned = false;
     let mut seq = resumable_sequence(engine, chain, cfg, cmask.as_ref(), WRITTEN_STRAIN, restored)?;
     while let Some(item) = seq.next() {
-        let (k, res) = item?;
+        let (k, mut res) = item?;
         if let Some(note) = note.take() {
             hooks.warn(&note);
         }
@@ -646,7 +684,15 @@ fn run_seq(
             }
         }
         let dir = cli.out.join(format!("frame_{k:05}"));
-        save(cli, &dir, &res, crop.as_ref(), (w, h))?;
+        save(
+            cli,
+            &dir,
+            &mut res,
+            crop.as_ref(),
+            (w, h),
+            cfg,
+            cmask.as_ref(),
+        )?;
         hooks.say(&format!(
             "frame {k}: reference {} mean conf {:.2}\n",
             res.timing

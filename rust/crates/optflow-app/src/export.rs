@@ -44,7 +44,7 @@ pub fn append_field_rows(out: &mut String, k: usize, t: &Timing, f: &Fields) {
     for y in (0..f.h).step_by(GRID) {
         for x in (0..f.w).step_by(GRID) {
             let i = y * f.w + x;
-            if !f.is_valid(i) {
+            if !f.has_value(i) {
                 continue;
             }
             let _ = writeln!(
@@ -184,7 +184,13 @@ pub fn overlay_pixel(
     a: u8,
     i: usize,
 ) -> [u8; 4] {
-    if f.is_valid(i) && map[i].is_finite() {
+    // the confidence map marks the pixels that fail the filter; the others show every value
+    let shown = if kind == Overlay::Conf {
+        f.is_valid(i)
+    } else {
+        f.has_value(i)
+    };
+    if shown && map[i].is_finite() {
         let c = color(scale, map[i], lo, hi);
         [c[0], c[1], c[2], a]
     } else if kind == Overlay::Conf {
@@ -291,6 +297,7 @@ mod tests {
             fb: Some(vec![2; n]),
             cod: None,
             csd: None,
+            valid: None,
             ux,
         }
     }

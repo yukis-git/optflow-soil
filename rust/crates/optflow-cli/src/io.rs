@@ -564,6 +564,19 @@ pub fn save_result(dir: &Path, res: &TrackResult) -> Result<()> {
 /// the placed `ux`. One placed map at a time is held, and each file is written in pieces. `gpu`
 /// adds `"device": "gpu"` to `timing.json` (after `coarse`); a CPU run's file is unchanged.
 pub fn save_result_placed(dir: &Path, res: &TrackResult, gpu: bool, place: &Place) -> Result<()> {
+    save_result_valid(dir, res, gpu, place, None)
+}
+
+/// [`save_result_placed`] with `valid.npy` taken from `valid` (1 where true, before `place`)
+/// instead of the finite pixels of `ux`: for a result whose `ux` is not masked by the confidence
+/// (`track::without_confidence_filter`), where `valid` keeps the meaning of the masked output.
+pub fn save_result_valid(
+    dir: &Path,
+    res: &TrackResult,
+    gpu: bool,
+    place: &Place,
+    valid: Option<&Image<bool>>,
+) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     let s = &res.strain;
     let fields: [(&str, &Image<f32>, f32); 8] = [
@@ -580,7 +593,20 @@ pub fn save_result_placed(dir: &Path, res: &TrackResult, gpu: bool, place: &Plac
         let placed = place(im, fill);
         write_npy_f32(&dir.join(format!("{name}.npy")), &placed)?;
         if name == "ux" {
-            write_valid(&dir.join("valid.npy"), &placed)?;
+            match valid {
+                None => write_valid(&dir.join("valid.npy"), &placed)?,
+                Some(v) => {
+                    let flags = Image::from_vec(
+                        v.w,
+                        v.h,
+                        v.data
+                            .iter()
+                            .map(|&b| if b { 1.0 } else { f32::NAN })
+                            .collect(),
+                    );
+                    write_valid(&dir.join("valid.npy"), &place(&flags, f32::NAN))?;
+                }
+            }
         }
     }
     let mut timing = serde_json::to_string_pretty(&res.timing).expect("timing serialises to JSON");

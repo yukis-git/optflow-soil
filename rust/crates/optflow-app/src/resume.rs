@@ -37,6 +37,9 @@ impl Mismatch {
             Mismatch::Setting(name) if name == "device" => "計算装置(CPU / GPU)が中断時と異なります。\
                 GPU の結果は CPU の結果と最後の桁まで同じにはならないため、中断時と同じ装置でしか再開できません。"
                 .into(),
+            Mismatch::Setting(name) if name == "conf_filter" => {
+                "信頼度フィルター(ON / OFF)が中断時と異なります。".into()
+            }
             Mismatch::Setting(name) => format!("設定 {name} が中断時と異なります。"),
             Mismatch::Build => {
                 "中断時とアプリの版または動作環境が異なるため、同じ結果を保証できません。".into()
@@ -51,7 +54,7 @@ impl Mismatch {
 }
 
 /// The keys of the settings in the metadata.
-const SETTING_KEYS: [&str; 10] = [
+const SETTING_KEYS: [&str; 11] = [
     "seq_mode",
     "tavg",
     "prewarp_freeze_at",
@@ -62,6 +65,7 @@ const SETTING_KEYS: [&str; 10] = [
     "scale",
     "crack",
     "device",
+    "conf_filter",
 ];
 
 /// The name of a device in the metadata (what a checkpoint written before the GPU choice existed
@@ -73,7 +77,7 @@ pub fn device_name(d: Device) -> &'static str {
     }
 }
 
-fn setting_values(s: &Settings) -> [String; 10] {
+fn setting_values(s: &Settings) -> [String; 11] {
     [
         s.seq_mode.clone(),
         s.tavg.to_string(),
@@ -85,6 +89,7 @@ fn setting_values(s: &Settings) -> [String; 10] {
         s.scale.to_string(),
         s.crack.to_string(),
         device_name(s.effective_device()).to_string(),
+        s.effective_filter().to_string(),
     ]
 }
 
@@ -189,10 +194,12 @@ pub fn compare(saved: &Meta, now: &Meta) -> Vec<Mismatch> {
     }
     for k in SETTING_KEYS {
         let key = format!("set.{k}");
-        // a checkpoint of a version without the choice of device ran on the CPU
+        // a checkpoint of a version without the choice of device ran on the CPU, and one without
+        // the choice of the confidence filter had it on
         let value = |m: &'_ Meta| -> Option<String> {
             m.get(&key)
                 .or((k == "device").then_some("cpu"))
+                .or((k == "conf_filter").then_some("true"))
                 .map(str::to_string)
         };
         if value(saved) != value(now) {
@@ -227,6 +234,7 @@ pub fn saved_values(m: &Meta) -> Option<Saved> {
         sigma_w: set("sigma_w")?.parse().ok()?,
         scale: set("scale")?.parse().ok()?,
         crack: set("crack")?.parse().ok()?,
+        conf_filter: set("conf_filter").is_none_or(|v| v == "true"),
         device: match set("device").unwrap_or("cpu") {
             "cpu" => Device::Cpu,
             "gpu" => Device::Gpu,
@@ -381,6 +389,7 @@ mod tests {
             out: PathBuf::from("/out/run_001"),
             autosave: None,
             resume: false,
+            fps: 1.0,
         }
     }
 
@@ -452,6 +461,30 @@ mod tests {
         assert!(compare(&old, &cpu).is_empty());
         assert_eq!(compare(&old, &gpu), want);
         assert_eq!(saved_values(&old).unwrap().settings.device, Device::Cpu);
+    }
+
+    #[test]
+    fn the_confidence_filter_identifies_a_run_and_an_old_checkpoint_had_it_on() {
+        let on = plain_meta(&spec());
+        let mut f = spec();
+        f.settings.conf_filter = false;
+        let off = plain_meta(&f);
+        let want = vec![Mismatch::Setting("conf_filter".into())];
+        assert_eq!(compare(&on, &off), want);
+        assert_eq!(compare(&off, &on), want);
+        assert!(want[0].restorable());
+        assert!(want[0].text().contains("信頼度フィルター"));
+        assert!(!saved_values(&off).unwrap().settings.conf_filter);
+        assert!(saved_values(&on).unwrap().settings.conf_filter);
+        // the crack model keeps the filter on whatever was chosen
+        f.settings.crack = true;
+        assert_eq!(plain_meta(&f).get("set.conf_filter"), Some("true"));
+        // a checkpoint written before the choice existed has no such key
+        let mut old = on.clone();
+        old.0.retain(|(k, _)| k != "set.conf_filter");
+        assert!(compare(&old, &on).is_empty());
+        assert_eq!(compare(&old, &off), want);
+        assert!(saved_values(&old).unwrap().settings.conf_filter);
     }
 
     #[test]

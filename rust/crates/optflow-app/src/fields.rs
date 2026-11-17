@@ -40,10 +40,22 @@ pub struct Fields {
     /// a crack line).
     pub cod: Option<Vec<f32>>,
     pub csd: Option<Vec<f32>>,
+    /// `valid.npy`: the pixels that pass the confidence filter. `None`: the finite `ux`, which is
+    /// the same for a run with the filter (and the only choice for a folder without the file).
+    pub valid: Option<Vec<bool>>,
 }
 
 impl Fields {
+    /// Whether pixel `i` passes the confidence filter (the pixels the valid fraction counts).
     pub fn is_valid(&self, i: usize) -> bool {
+        self.valid
+            .as_ref()
+            .map_or_else(|| self.ux[i].is_finite(), |v| v[i])
+    }
+
+    /// Whether pixel `i` has a displacement: the pixels the views and the CSV show. With the
+    /// confidence filter these are the valid pixels; a run without it has them in the whole ROI.
+    pub fn has_value(&self, i: usize) -> bool {
         self.ux[i].is_finite()
     }
 
@@ -70,9 +82,16 @@ impl Fields {
                 Ok(None)
             }
         };
+        let valid_path = dir.join("valid.npy");
+        let valid = if valid_path.exists() {
+            Some(read_u8(&valid_path, (h, w))?)
+        } else {
+            None
+        };
         Ok(Fields {
             w,
             h,
+            valid,
             cod: opt("cod.npy")?,
             csd: opt("csd.npy")?,
             uy: get("uy.npy")?,
@@ -86,7 +105,7 @@ impl Fields {
 }
 
 /// The `(h, w)` and data start of a 2-D npy file, checking the dtype.
-fn parse(bytes: &[u8], descr: &str) -> Result<(usize, usize, usize)> {
+fn parse(bytes: &[u8], descr: &str, size: usize) -> Result<(usize, usize, usize)> {
     if bytes.len() < 10 || &bytes[..6] != b"\x93NUMPY" {
         bail!("not an npy file");
     }
@@ -119,7 +138,7 @@ fn parse(bytes: &[u8], descr: &str) -> Result<(usize, usize, usize)> {
     let [h, w] = dims[..] else {
         bail!("expected a 2-D array, got shape ({shape})");
     };
-    if bytes.len() < start + hl + 4 * h * w {
+    if bytes.len() < start + hl + size * h * w {
         bail!("npy data is truncated");
     }
     Ok((h, w, start + hl))
@@ -127,7 +146,7 @@ fn parse(bytes: &[u8], descr: &str) -> Result<(usize, usize, usize)> {
 
 fn read_f32(path: &Path) -> Result<(usize, usize, Vec<f32>)> {
     let bytes = std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
-    let (h, w, at) = parse(&bytes, "<f4").with_context(|| path.display().to_string())?;
+    let (h, w, at) = parse(&bytes, "<f4", 4).with_context(|| path.display().to_string())?;
     let data = bytes[at..at + 4 * h * w]
         .as_chunks::<4>()
         .0
@@ -137,9 +156,19 @@ fn read_f32(path: &Path) -> Result<(usize, usize, Vec<f32>)> {
     Ok((h, w, data))
 }
 
+/// A `valid.npy` (`|u1`) of the shape `shape`, as flags.
+fn read_u8(path: &Path, shape: (usize, usize)) -> Result<Vec<bool>> {
+    let bytes = std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let (h, w, at) = parse(&bytes, "|u1", 1).with_context(|| path.display().to_string())?;
+    if (h, w) != shape {
+        bail!("valid has a different shape in {}", path.display());
+    }
+    Ok(bytes[at..at + h * w].iter().map(|&b| b != 0).collect())
+}
+
 fn read_i32(path: &Path) -> Result<(usize, usize, Vec<i32>)> {
     let bytes = std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
-    let (h, w, at) = parse(&bytes, "<i4").with_context(|| path.display().to_string())?;
+    let (h, w, at) = parse(&bytes, "<i4", 4).with_context(|| path.display().to_string())?;
     let data = bytes[at..at + 4 * h * w]
         .as_chunks::<4>()
         .0

@@ -51,9 +51,14 @@ pub fn frame_stats(k: usize, f: &Fields, roi: Option<&[bool]>) -> FrameStats {
             continue;
         }
         roi_n += 1;
+        // the valid fraction and the mean confidence count the pixels that pass the confidence
+        // filter; the values are those written (every ROI pixel in a run without the filter)
         if f.is_valid(i) {
             valid_n += 1;
-            // a valid pixel can still lack a strain value (NaN near the edge of the valid area)
+            conf_sum += f.conf[i] as f64;
+        }
+        if f.has_value(i) {
+            // a pixel can still lack a strain value (NaN near the edge of the valid area)
             ux.push(f.ux[i]);
             if f.uy[i].is_finite() {
                 uy.push(f.uy[i]);
@@ -64,7 +69,6 @@ pub fn frame_stats(k: usize, f: &Fields, roi: Option<&[bool]>) -> FrameStats {
             if f.vol[i].is_finite() {
                 v.push(f.vol[i]);
             }
-            conf_sum += f.conf[i] as f64;
         }
     }
     // a 26-megapixel frame has millions of values here: one sort per list
@@ -146,7 +150,7 @@ impl Overlay {
     }
 }
 
-/// The automatic colour range of `kind` for frame `f` (over the valid pixels): gmax 0 to its 99th
+/// The automatic colour range of `kind` for frame `f` (over the pixels with a value): gmax 0 to its 99th
 /// percentile, displacements symmetric about 0 up to the larger of their 2nd and 98th
 /// percentiles, confidence 0 to 1.
 pub fn auto_range(kind: Overlay, f: &Fields) -> (f32, f32) {
@@ -155,7 +159,7 @@ pub fn auto_range(kind: Overlay, f: &Fields) -> (f32, f32) {
     }
     let map = kind.map(f);
     let mut v: Vec<f32> = (0..f.w * f.h)
-        .filter(|&i| f.is_valid(i))
+        .filter(|&i| f.has_value(i))
         .map(|i| map[i])
         .filter(|x| x.is_finite())
         .collect();
@@ -186,6 +190,7 @@ mod tests {
             fb: None,
             cod: None,
             csd: None,
+            valid: None,
             ux,
         }
     }
