@@ -79,18 +79,6 @@ pub fn text(count: Option<usize>, start: i64, stop: i64, step: i64, fps: f64) ->
     }
 }
 
-/// 「このフレームを開始に」: the start becomes `frame`. An end that is then not after the start
-/// stays as it is, and the range text says so.
-pub fn set_start(start: &mut i64, frame: i64) {
-    *start = frame.max(0);
-}
-
-/// 「このフレームを終了に」: `frame` becomes the last frame of the range, so the end (exclusive)
-/// is the frame after it.
-pub fn set_end(stop: &mut i64, frame: i64) {
-    *stop = frame.max(0) + 1;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,26 +133,21 @@ mod tests {
     }
 
     #[test]
-    fn the_buttons_set_the_start_and_the_last_frame() {
-        let (mut start, mut stop) = (0i64, 0i64);
-        set_start(&mut start, 12);
-        set_end(&mut stop, 40);
+    fn the_bar_handles_give_the_range_the_line_names() {
+        use crate::range_bar::{end_shown, moved, stop_from_end, Handle};
+        // start at 12, end handle on frame 40 (stored 41), step 4
+        let (start, end) = moved(Handle::End, 40, 12, 99, 4, 100);
+        let stop = stop_from_end(end);
         assert_eq!((start, stop), (12, 41));
-        // frame 40 is the last one computed when the step meets it
+        assert_eq!(end_shown(stop, 100), 40);
         assert_eq!(picked(Some(100), start, stop, 4).unwrap().last(), Some(&40));
         assert_eq!(
             text(Some(100), start, stop, 4, 10.0),
             "計算するフレーム: 8 枚(12 〜 40、間隔 4、1.20 〜 4.00 秒)"
         );
-        // a start moved past the end is shown as refused, and the end stays
-        set_start(&mut start, 60);
-        assert_eq!((start, stop), (60, 41));
-        assert!(check(Some(100), start, stop, 1).is_err());
-        // the end button before the start does the same
-        set_start(&mut start, 20);
-        set_end(&mut stop, 5);
-        assert!(check(Some(100), start, stop, 1).is_err());
-        set_start(&mut start, -3);
-        assert_eq!(start, 0);
+        // a start handle dragged to the right edge stops short of the end, so the range can run
+        let (start, _) = moved(Handle::Start, 99, start, end, 4, 100);
+        assert_eq!(start, 36);
+        assert!(check(Some(100), start, stop, 4).is_ok());
     }
 }

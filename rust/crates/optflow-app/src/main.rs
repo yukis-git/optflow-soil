@@ -16,15 +16,47 @@ use optflow_app::fields::Fields;
 use optflow_app::job::{self, JobSpec, Msg, Running};
 use optflow_app::preview::{FrameWorker, Purpose};
 use optflow_app::range;
+use optflow_app::range_bar::{self, Handle as BarHandle};
 use optflow_app::resume::{self, Mismatch};
 use optflow_app::roi_edit::{self, Cursor, Drag, Handle};
 use optflow_app::settings::{Preset, Settings};
 use optflow_app::source::{Gray8, Source};
 use optflow_app::stats::{FrameStats, Overlay};
+use optflow_app::video_export::{self, Stage};
 use optflow_app::view::{self, ViewKey, ViewWorker};
 use optflow_app::{fonts, messages, power};
 use optflow_cli::args::Device;
 use optflow_cli::checkpoint::{self, Policy, SaveInfo, Summary};
+
+/// A video export in the background: what it reports, and how to cancel it.
+struct VideoJob {
+    rx: Receiver<VideoMsg>,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+    stage: Stage,
+    done: usize,
+    total: usize,
+}
+
+enum VideoMsg {
+    Progress(Stage, usize, usize),
+    /// Finished: the message to show (`Ok(false)` inside is a cancel).
+    End(Result<bool, String>, PathBuf, usize),
+}
+
+/// How long the start frame must stay put before the canvas loads it.
+const START_STILL: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// The width of a thumbnail under "2. 範囲と領域", in screen points.
+const THUMB_WIDTH: f32 = 240.0;
+
+/// One thumbnail of the range bar: the frame asked for, the last texture read (with its frame
+/// number: shown, dimmed, until the wanted frame arrives) and the error of the wanted frame.
+#[derive(Default)]
+struct Thumb {
+    asked: Option<i64>,
+    tex: Option<(i64, egui::TextureHandle)>,
+    error: Option<(i64, String)>,
+}
 
 /// How far from a ROI handle the pointer still takes it, in screen pixels at any zoom.
 const HANDLE_RADIUS: f32 = 9.0;
@@ -68,6 +100,14 @@ struct Script {
     checked_device: bool,
     /// The drive of the v0.4 features: the frame slider, the filter off, the first-to-last export.
     v040: bool,
+    /// The drive of the v0.4.1 range bar and thumbnails.
+    v041: bool,
+    /// After the v0.4.1 bar drive: run all frames and export the video.
+    vid: bool,
+    /// The moment of the last release of a handle (for the time a thumbnail takes).
+    mark: Option<Instant>,
+    /// Seconds from `mark` until the thumbnails showed the frames of the handles.
+    thumb_at: Option<f64>,
 }
 
 /// Test mode (`--selftest SOURCE "x,y;x,y;..." OUTDIR`): the window does what a user would do,
@@ -93,18 +133,19 @@ struct App {
     first_tex: Option<egui::TextureHandle>,
     /// The source frame `first` is (the start frame, when the picture has caught up with it).
     first_start: i64,
-    // the frame slider of "2. 範囲と領域": a chosen source frame shown on the canvas
+    // the frames read in the background: the canvas picture and the two thumbnails of the range bar
     frames: FrameWorker,
-    /// The frame the slider is on.
-    pick: i64,
-    /// The slider (or a button beside it) is in use: the canvas shows `pick`.
-    pick_hot: bool,
-    pick_asked: Option<i64>,
+    thumb_start: Thumb,
+    thumb_end: Thumb,
     start_asked: Option<i64>,
-    /// The frame read for the slider: its picture, and the texture of it.
-    pick_gray: Option<(i64, Arc<Gray8>)>,
-    pick_tex: Option<(i64, egui::TextureHandle)>,
-    pick_error: Option<String>,
+    /// The start frame last seen, and since when: the canvas follows it once it has been still.
+    start_seen: (i64, Instant),
+    /// A handle of the range bar is being dragged.
+    bar_dragging: bool,
+    /// The handle being dragged, and the pointer's distance from its centre at the press.
+    bar_grab: Option<(BarHandle, f32)>,
+    /// The handle that last had the keyboard focus (arrow keys move it).
+    bar_focus: BarHandle,
     roi: Vec<(f64, f64)>,
     start: i64,
     /// 0: to the end.
@@ -143,6 +184,11 @@ struct App {
     view_asked: Option<ViewKey>,
     view_done: Option<ViewKey>,
     export_rx: Option<Receiver<Result<String, String>>>,
+    /// 「動画で書き出す…」 under way.
+    video_job: Option<VideoJob>,
+    /// 「再生速度(fps)」 of the video, and the (frame rate, step) it was derived from.
+    video_fps: f64,
+    video_fps_from: (f64, i64),
     ffmpeg_ok: bool,
     auto: Option<Auto>,
     script: Option<Script>,
@@ -175,12 +221,12 @@ struct App {
     btn_device_cpu: Option<egui::Rect>,
     btn_device_gpu: Option<egui::Rect>,
     btn_filter: Option<egui::Rect>,
-    btn_pick: Option<egui::Rect>,
+    /// The track of the range bar: frame 0 at its left edge, the last frame at its right edge.
+    btn_bar: Option<egui::Rect>,
     /// The run on show finished (not stopped or failed).
     run_complete: bool,
     btn_first_last: Option<egui::Rect>,
-    btn_pick_start: Option<egui::Rect>,
-    btn_pick_end: Option<egui::Rect>,
+    btn_video: Option<egui::Rect>,
     /// Whether the machine has a Metal GPU (looked for on a thread of its own at startup).
     gpu: Gpu,
     gpu_rx: Option<Receiver<Gpu>>,
@@ -229,13 +275,13 @@ impl App {
                 let c = cc.egui_ctx.clone();
                 FrameWorker::start(Arc::new(move || c.request_repaint()))
             },
-            pick: 0,
-            pick_hot: false,
-            pick_asked: None,
+            thumb_start: Thumb::default(),
+            thumb_end: Thumb::default(),
             start_asked: None,
-            pick_gray: None,
-            pick_tex: None,
-            pick_error: None,
+            start_seen: (0, Instant::now()),
+            bar_dragging: false,
+            bar_grab: None,
+            bar_focus: BarHandle::Start,
             roi: vec![],
             start: 0,
             stop: 0,
@@ -268,6 +314,9 @@ impl App {
             view_asked: None,
             view_done: None,
             export_rx: None,
+            video_job: None,
+            video_fps: 10.0,
+            video_fps_from: (0.0, 0),
             ffmpeg_ok: optflow_cli::video::tools_available(),
             auto,
             script,
@@ -290,11 +339,10 @@ impl App {
             btn_device_cpu: None,
             btn_device_gpu: None,
             btn_filter: None,
-            btn_pick: None,
+            btn_bar: None,
             run_complete: false,
             btn_first_last: None,
-            btn_pick_start: None,
-            btn_pick_end: None,
+            btn_video: None,
             gpu,
             gpu_rx,
         }
@@ -344,8 +392,7 @@ impl App {
                 self.first_tex = Some(ctx.load_texture("first", img, egui::TextureOptions::LINEAR));
                 self.first = Some(Arc::new(g));
                 self.first_start = self.start.max(0);
-                self.pick = self.start.max(0);
-                self.forget_pick();
+                self.forget_thumbs();
                 true
             }
             Err(e) => {
@@ -355,13 +402,10 @@ impl App {
         }
     }
 
-    /// Drops what the slider showed (another input, or another start frame).
-    fn forget_pick(&mut self) {
-        self.pick_hot = false;
-        self.pick_asked = None;
-        self.pick_gray = None;
-        self.pick_tex = None;
-        self.pick_error = None;
+    /// Drops the thumbnails (another input, or a run begins).
+    fn forget_thumbs(&mut self) {
+        self.thumb_start = Thumb::default();
+        self.thumb_end = Thumb::default();
     }
 
     /// Takes in the frames the reading thread finished.
@@ -371,12 +415,20 @@ impl App {
                 Ok(l) => {
                     let img = egui::ColorImage::from_gray([l.small.0, l.small.1], &l.small.2);
                     match l.purpose {
-                        Purpose::Slider => {
-                            let tex = ctx.load_texture("pick", img, egui::TextureOptions::LINEAR);
-                            self.pick_tex = Some((l.n, tex));
-                            // a frame found by a time seek is not used as the reference
-                            self.pick_gray = (!l.seeked).then_some((l.n, l.gray));
-                            self.pick_error = None;
+                        Purpose::ThumbStart | Purpose::ThumbEnd => {
+                            let name = if l.purpose == Purpose::ThumbStart {
+                                "thumb_start"
+                            } else {
+                                "thumb_end"
+                            };
+                            let tex = ctx.load_texture(name, img, egui::TextureOptions::LINEAR);
+                            let t = if l.purpose == Purpose::ThumbStart {
+                                &mut self.thumb_start
+                            } else {
+                                &mut self.thumb_end
+                            };
+                            t.tex = Some((l.n, tex));
+                            t.error = None;
                         }
                         Purpose::Start => {
                             // a start frame that is no longer the start, or a picture under a run,
@@ -395,9 +447,14 @@ impl App {
                     }
                 }
                 Err((purpose, n, text)) => match purpose {
-                    Purpose::Slider => {
-                        if self.pick_asked == Some(n) {
-                            self.pick_error = Some(text);
+                    Purpose::ThumbStart | Purpose::ThumbEnd => {
+                        let t = if purpose == Purpose::ThumbStart {
+                            &mut self.thumb_start
+                        } else {
+                            &mut self.thumb_end
+                        };
+                        if t.asked == Some(n) {
+                            t.error = Some((n, text));
                         }
                     }
                     Purpose::Start => self.start_asked = None,
@@ -406,10 +463,24 @@ impl App {
         }
     }
 
-    /// Makes the canvas follow the start frame when the number was changed: from the frame the
-    /// slider already has, else read on the reading thread. Under a run the picture stays.
+    /// Makes the canvas follow the start frame when it has changed and been still for a moment (a
+    /// handle being dragged does not count): read on the reading thread. Under a run the picture
+    /// stays.
     fn follow_start(&mut self, ctx: &egui::Context) {
         let want = self.start.max(0);
+        if self.start_seen.0 != want || self.bar_dragging {
+            self.start_seen = (want, Instant::now());
+        }
+        if self.bar_dragging {
+            return;
+        }
+        let still = self.start_seen.1.elapsed();
+        if still < START_STILL {
+            if self.first_start != want {
+                ctx.request_repaint_after(START_STILL - still);
+            }
+            return;
+        }
         let (Some(s), true) = (
             &self.source,
             self.run_dir.is_none() && self.running.is_none(),
@@ -417,15 +488,6 @@ impl App {
             return;
         };
         if self.first.is_none() || self.first_start == want || self.start_asked == Some(want) {
-            return;
-        }
-        if let Some((n, g)) = self.pick_gray.clone().filter(|(n, _)| *n == want) {
-            let factor = view::display_factor(g.w, g.h, max_texture_side(ctx));
-            let (w, h, data) = view::shrink_gray(&g, factor);
-            let img = egui::ColorImage::from_gray([w, h], &data);
-            self.first_tex = Some(ctx.load_texture("first", img, egui::TextureOptions::LINEAR));
-            self.first = Some(g);
-            self.first_start = n;
             return;
         }
         let factor = view::display_factor(s.w, s.h, max_texture_side(ctx));
@@ -882,6 +944,99 @@ impl App {
         self.notice = Some("最初→最後の分布を書き出し中...".into());
     }
 
+    /// Takes in what the video export reported.
+    fn poll_video(&mut self, ctx: &egui::Context) {
+        let Some(job) = &mut self.video_job else {
+            return;
+        };
+        let mut end = None;
+        while let Ok(m) = job.rx.try_recv() {
+            match m {
+                VideoMsg::Progress(s, k, n) => (job.stage, job.done, job.total) = (s, k, n),
+                VideoMsg::End(r, path, n) => end = Some((r, path, n)),
+            }
+        }
+        if let Some((r, path, n)) = end {
+            self.video_job = None;
+            self.notice = Some(match r {
+                Ok(true) => {
+                    let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                    format!(
+                        "動画を書き出しました: {}({n} フレーム、{:.1} MB)",
+                        path.display(),
+                        size as f64 / 1e6
+                    )
+                }
+                Ok(false) => {
+                    "動画の書き出しを中止しました(書きかけのファイルは消しました)。".into()
+                }
+                Err(e) => format!("動画を書き出せません: {e}"),
+            });
+        } else if self.video_job.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+    }
+
+    /// Writes the results of the run on show as an MP4 ([`video_export`]): the quantity on show
+    /// over the first frame, with one colour range (the one on show, or the automatic range over
+    /// all the results), at `video_fps` frames per second.
+    fn start_video_export(&mut self, ctx: &egui::Context, dest: PathBuf) {
+        let (Some(run), Some(bg)) = (self.run_dir.clone(), self.first.clone()) else {
+            return;
+        };
+        if self
+            .fields
+            .as_ref()
+            .is_some_and(|f| (f.w, f.h) != (bg.w, bg.h))
+        {
+            self.notice =
+                Some("縮小率 2 以上の結果は入力画像と大きさが異なるため動画にできません。".into());
+            return;
+        }
+        let ks: Vec<usize> = self.series.iter().map(|s| s.k).collect();
+        let (t, roi, kind, alpha) = (self.timing(), self.roi.clone(), self.overlay, self.alpha);
+        let range = (!self.auto_scale).then_some((self.lo, self.hi));
+        let fps = self.video_fps;
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (tx, rx) = channel();
+        let (c, flag) = (ctx.clone(), cancel.clone());
+        let n = ks.len();
+        let path = dest.clone();
+        std::thread::spawn(move || {
+            let _awake = power::keep_running("optflow export");
+            let r = video_export::detect_encoder().and_then(|enc| {
+                video_export::export_video(
+                    &run,
+                    &dest,
+                    &ks,
+                    &t,
+                    &bg,
+                    &roi,
+                    kind,
+                    range,
+                    alpha,
+                    fps,
+                    &enc,
+                    &mut |s, k, total| {
+                        let _ = tx.send(VideoMsg::Progress(s, k, total));
+                        c.request_repaint();
+                        !flag.load(std::sync::atomic::Ordering::Relaxed)
+                    },
+                )
+            });
+            let _ = tx.send(VideoMsg::End(r.map_err(|e| format!("{e:#}")), path, n));
+            c.request_repaint();
+        });
+        self.video_job = Some(VideoJob {
+            rx,
+            cancel,
+            stage: Stage::Range,
+            done: 0,
+            total: n,
+        });
+        self.notice = None;
+    }
+
     fn start_csv_export(&mut self, ctx: &egui::Context, dest: PathBuf) {
         let Some(run) = self.run_dir.clone() else {
             return;
@@ -1245,15 +1400,85 @@ impl App {
                 self.save_png(ctx);
             }
         });
+        self.video_controls(ui, ctx, has);
         if let Some(r) = &self.run_dir {
             ui.add(egui::Label::new(format!("結果フォルダ: {}", r.display())).wrap());
         }
     }
 
-    /// The line that says which frames are computed, the slider that shows any frame of the input
-    /// on the canvas, and the buttons that take the shown frame as the start or the end.
+    /// 「動画で書き出す…」, the playback speed, and the progress with a cancel button.
+    fn video_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, has: bool) {
+        // the default speed is the source's frame rate over the step; a changed range or rate
+        // brings it back
+        let from = (self.fps, self.step.max(1));
+        if self.video_fps_from != from {
+            self.video_fps_from = from;
+            if self.fps > 0.0 {
+                self.video_fps = self.fps / from.1 as f64;
+            }
+        }
+        if let Some(job) = &self.video_job {
+            let text = match job.stage {
+                Stage::Range => format!("色の範囲を計算中… {} / {}", job.done, job.total),
+                Stage::Encode => format!("動画を書き出し中… {} / {}", job.done, job.total),
+            };
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(text);
+                if ui.button("中止").clicked() {
+                    job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            });
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            let ready = has && self.export_rx.is_none() && !self.view_busy();
+            let b = ui.add_enabled(ready, egui::Button::new("動画で書き出す…"));
+            self.btn_video = Some(b.rect);
+            if b.clicked() {
+                let name = self
+                    .run_dir
+                    .as_ref()
+                    .and_then(|r| r.file_name())
+                    .map_or("run".to_string(), |n| n.to_string_lossy().into_owned());
+                let kind = video_export::label(self.overlay).0.to_lowercase();
+                if let Some(p) = rfd::FileDialog::new()
+                    .set_file_name(format!("{name}_{kind}.mp4"))
+                    .add_filter("MP4", &["mp4"])
+                    .save_file()
+                {
+                    self.start_video_export(ctx, p);
+                }
+            }
+            ui.label("再生速度(fps)");
+            ui.add(
+                egui::DragValue::new(&mut self.video_fps)
+                    .range(0.1..=240.0)
+                    .speed(0.1),
+            );
+        });
+        ui.add(
+            egui::Label::new(
+                "表示中の量(色の範囲は固定。自動のときは全フレームで決めます)を、結果 1 つにつき 1 コマで書き出します。",
+            )
+            .wrap(),
+        );
+    }
+
+    /// The two thumbnails and the bar with two handles that choose the start and the end frame, and
+    /// the line that says which frames are computed.
     fn range_picker(&mut self, ui: &mut egui::Ui) {
         let count = self.source.as_ref().and_then(|s| s.count);
+        if let (Some(s), None, Some(n)) = (
+            self.source.clone(),
+            &self.run_dir,
+            count.filter(|&n| n >= 1),
+        ) {
+            self.thumbnails(ui, &s, n);
+            self.range_bar(ui, n);
+        } else {
+            self.btn_bar = None;
+        }
         let bad = range::check(count, self.start, self.stop, self.step).is_err();
         let line = range::text(count, self.start, self.stop, self.step, self.fps);
         let line = if bad {
@@ -1262,51 +1487,270 @@ impl App {
             RichText::new(line)
         };
         ui.add(egui::Label::new(line).wrap());
-        ui.label("終了フレームの番号のフレームは含みません。");
-        let (Some(s), None) = (self.source.clone(), &self.run_dir) else {
-            return;
-        };
-        let Some(n) = s.count.filter(|&n| n >= 1) else {
-            return;
-        };
-        self.pick = self.pick.clamp(0, n as i64 - 1);
-        let mut hot = false;
-        ui.horizontal_wrapped(|ui| {
-            ui.label("確認するフレーム");
-            ui.spacing_mut().slider_width = 200.0;
-            let r = ui.add(egui::Slider::new(&mut self.pick, 0..=n as i64 - 1));
-            self.btn_pick = Some(r.rect);
-            hot |= r.hovered() || r.dragged() || r.has_focus();
-        });
-        ui.horizontal_wrapped(|ui| {
-            let a = ui.button("このフレームを開始に");
-            self.btn_pick_start = Some(a.rect);
-            hot |= a.hovered();
-            if a.clicked() {
-                range::set_start(&mut self.start, self.pick);
+        // the end number is exclusive (as `--stop`); the right handle of the bar is the frame
+        // before it
+        ui.label("終了フレームの番号のフレームは含みません(バーの右の取っ手は 1 つ前)。");
+    }
+
+    /// Asks for the frames of the two thumbnails (the frames the handles are on) and draws them
+    /// side by side, or one above the other in a narrow panel.
+    fn thumbnails(&mut self, ui: &mut egui::Ui, s: &Source, count: usize) {
+        let (a, b) = (
+            range_bar::start_shown(self.start, count),
+            range_bar::end_shown(self.stop, count),
+        );
+        let factor = (s.w / (2 * THUMB_WIDTH as usize)).max(1);
+        for (t, n, purpose) in [
+            (&mut self.thumb_start, a, Purpose::ThumbStart),
+            (&mut self.thumb_end, b, Purpose::ThumbEnd),
+        ] {
+            if t.asked != Some(n) {
+                self.frames.request(s, n, factor, purpose);
+                t.asked = Some(n);
             }
-            let b = ui.button("このフレームを終了に");
-            self.btn_pick_end = Some(b.rect);
-            hot |= b.hovered();
-            if b.clicked() {
-                range::set_end(&mut self.stop, self.pick);
-            }
-        });
-        self.pick_hot = hot;
-        if hot && self.pick_asked != Some(self.pick) {
-            let factor = view::display_factor(s.w, s.h, 2560);
-            self.frames.request(&s, self.pick, factor, Purpose::Slider);
-            self.pick_asked = Some(self.pick);
         }
-        if hot {
-            if let Some(e) = &self.pick_error {
-                ui.colored_label(Color32::from_rgb(210, 40, 40), e);
-            } else if self.pick_tex.as_ref().map(|t| t.0) != Some(self.pick) {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("読み込み中…");
+        let gap = ui.spacing().item_spacing.x;
+        let avail = ui.available_width() - 14.0;
+        let (w, side_by_side) = if avail >= 2.0 * THUMB_WIDTH + gap {
+            (THUMB_WIDTH, true)
+        } else if avail >= 2.0 * 200.0 + gap {
+            ((avail - gap) / 2.0, true)
+        } else {
+            (avail.min(THUMB_WIDTH), false)
+        };
+        let h = w * s.h as f32 / s.w.max(1) as f32;
+        let fps = if self.fps > 0.0 { self.fps } else { 1.0 };
+        let roi: &[(f64, f64)] = if self.roi_closed { &self.roi } else { &[] };
+        let size = (s.w as f32, s.h as f32);
+        let cell = |ui: &mut egui::Ui, name: &str, n: i64, t: &Thumb, roi: &[(f64, f64)]| {
+            ui.vertical(|ui| {
+                ui.label(format!("{name} {n}({:.2} 秒)", n as f64 / fps));
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
+                let p = ui.painter_at(rect);
+                p.rect_filled(rect, 0.0, Color32::from_gray(40));
+                let current = t.tex.as_ref().is_some_and(|x| x.0 == n);
+                if let Some((_, tex)) = &t.tex {
+                    let tint = if current {
+                        Color32::WHITE
+                    } else {
+                        Color32::from_gray(120)
+                    };
+                    p.image(
+                        tex.id(),
+                        rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        tint,
+                    );
+                }
+                if roi.len() >= 3 {
+                    let mut pts: Vec<egui::Pos2> = roi
+                        .iter()
+                        .map(|&(x, y)| {
+                            rect.min + egui::vec2(x as f32 / size.0 * w, y as f32 / size.1 * h)
+                        })
+                        .collect();
+                    pts.push(pts[0]);
+                    p.add(egui::Shape::line(
+                        pts,
+                        Stroke::new(1.5, Color32::from_rgb(255, 220, 0)),
+                    ));
+                }
+                if current {
+                    return;
+                }
+                if let Some((_, e)) = t.error.as_ref().filter(|e| e.0 == n) {
+                    ui.colored_label(Color32::from_rgb(210, 40, 40), e);
+                } else {
+                    p.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "読み込み中…",
+                        egui::FontId::proportional(14.0),
+                        Color32::WHITE,
+                    );
+                }
+            });
+        };
+        let (ts, te) = (&self.thumb_start, &self.thumb_end);
+        if side_by_side {
+            ui.horizontal(|ui| {
+                cell(ui, "開始", a, ts, roi);
+                cell(ui, "終了", b, te, &[]);
+            });
+        } else {
+            cell(ui, "開始", a, ts, roi);
+            cell(ui, "終了", b, te, &[]);
+        }
+    }
+
+    /// The bar from frame 0 to the last frame with a handle for the start and one for the end
+    /// (see [`range_bar`] for the rules). Dragging a handle, clicking the track (the nearer handle
+    /// goes there) and the arrow keys on a focused handle change the number fields; a number
+    /// field that is out of range is drawn clamped and left as it is.
+    fn range_bar(&mut self, ui: &mut egui::Ui, count: usize) {
+        let usable = range_bar::usable(Some(count));
+        let step = self.step.max(1);
+        let (start, end) = (
+            range_bar::start_shown(self.start, count),
+            range_bar::end_shown(self.stop, count),
+        );
+        let pad = 12.0;
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
+        let (left, width) = (rect.left() + pad, (rect.width() - 2.0 * pad).max(1.0));
+        let y = rect.top() + 14.0;
+        let x_of = |f: i64| range_bar::x_of(f, left, width, count);
+        let track = egui::Rect::from_min_max(
+            egui::pos2(left, y - 10.0),
+            egui::pos2(left + width, y + 10.0),
+        );
+        self.btn_bar = Some(egui::Rect::from_min_max(
+            egui::pos2(left, y),
+            egui::pos2(left + width, y),
+        ));
+        let sense = if usable {
+            egui::Sense::click_and_drag()
+        } else {
+            egui::Sense::hover()
+        };
+        let id = egui::Id::unique("range_bar");
+        let track_r = ui.interact(
+            rect.intersect(track.expand2(egui::vec2(pad, 4.0))),
+            id,
+            sense,
+        );
+        let handle_r = |ui: &mut egui::Ui, h: BarHandle, f: i64| {
+            let c = egui::pos2(x_of(f), y);
+            ui.interact(
+                egui::Rect::from_center_size(c, egui::vec2(18.0, 24.0)),
+                id.with(match h {
+                    BarHandle::Start => "start",
+                    BarHandle::End => "end",
+                }),
+                sense,
+            )
+        };
+        let rs = handle_r(ui, BarHandle::Start, start);
+        let re = handle_r(ui, BarHandle::End, end);
+        // what the pointer and the keys ask for
+        let mut want: Option<(BarHandle, i64)> = None;
+        let dragging = rs.dragged() || re.dragged();
+        for (h, r, f) in [(BarHandle::Start, &rs, start), (BarHandle::End, &re, end)] {
+            if r.drag_started() {
+                // where the button went down (the pointer has moved on by the time a drag starts)
+                let px = ui
+                    .input(|i| i.pointer.press_origin())
+                    .map_or(x_of(f), |p| p.x);
+                self.bar_grab = Some((h, px - x_of(f)));
+            }
+            if r.dragged() || r.drag_stopped() {
+                // the newest pointer position, so that the last move before the release counts
+                let pos = ui.input(|i| i.pointer.latest_pos());
+                if let (Some((gh, off)), Some(p)) = (self.bar_grab, pos) {
+                    if gh == h {
+                        want = Some((h, range_bar::frame_at(p.x - off, left, width, count)));
+                    }
+                }
+            }
+            if r.has_focus() {
+                self.bar_focus = h;
+                ui.memory_mut(|m| {
+                    m.set_focus_lock_filter(
+                        r.id,
+                        egui::EventFilter {
+                            horizontal_arrows: true,
+                            ..Default::default()
+                        },
+                    )
+                });
+                let (l, rt) = ui.input_mut(|i| {
+                    (
+                        i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft),
+                        i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight),
+                    )
+                });
+                let d = rt as i64 - l as i64;
+                if d != 0 {
+                    want = Some((h, f + d));
+                }
+            }
+        }
+        if !dragging {
+            self.bar_grab = None;
+        }
+        if want.is_none() && track_r.clicked() {
+            if let Some(p) = track_r.interact_pointer_pos() {
+                let f = range_bar::frame_at(p.x, left, width, count);
+                want = Some((range_bar::nearer(f, start, end), f));
+            }
+        }
+        self.bar_dragging = dragging;
+        if usable {
+            if let Some((h, f)) = want {
+                let (ns, ne) = range_bar::moved(h, f, start, end, step, count);
+                if ns != start {
+                    self.start = ns;
+                }
+                if ne != end {
+                    self.stop = range_bar::stop_from_end(ne);
+                }
+            }
+            if rs.hovered() || re.hovered() || track_r.hovered() {
+                ui.ctx().set_cursor_icon(if dragging {
+                    egui::CursorIcon::Grabbing
+                } else {
+                    egui::CursorIcon::Grab
                 });
             }
+        }
+        // drawing: the track, the part between the handles, the handles
+        let v = ui.visuals();
+        let accent = if usable {
+            v.selection.bg_fill
+        } else {
+            v.widgets.noninteractive.bg_stroke.color
+        };
+        let p = ui.painter();
+        p.line_segment(
+            [egui::pos2(left, y), egui::pos2(left + width, y)],
+            Stroke::new(4.0, v.widgets.inactive.bg_fill),
+        );
+        p.line_segment(
+            [egui::pos2(x_of(start), y), egui::pos2(x_of(end), y)],
+            Stroke::new(6.0, accent),
+        );
+        for (r, f) in [(&rs, start), (&re, end)] {
+            let lit = usable && (r.hovered() || r.dragged());
+            let fill = if lit {
+                v.widgets.hovered.bg_fill
+            } else {
+                v.widgets.inactive.weak_bg_fill
+            };
+            let ring = if r.has_focus() {
+                v.selection.stroke.color
+            } else {
+                accent
+            };
+            p.circle(egui::pos2(x_of(f), y), 8.0, fill, Stroke::new(2.0, ring));
+        }
+        let font = egui::FontId::proportional(11.0);
+        let weak = v.weak_text_color();
+        p.text(
+            egui::pos2(left, y + 14.0),
+            egui::Align2::LEFT_TOP,
+            "0",
+            font.clone(),
+            weak,
+        );
+        p.text(
+            egui::pos2(left + width, y + 14.0),
+            egui::Align2::RIGHT_TOP,
+            format!("{}", count - 1),
+            font,
+            weak,
+        );
+        if !usable {
+            ui.label("フレームが 1 枚だけなので、範囲は選べません。");
         }
     }
 
@@ -1507,15 +1951,10 @@ impl App {
         self.image_area = Some((rect, s));
         let painter = ui.painter_at(rect);
         let first_size = (first.w, first.h);
-        let shown_pick = self
-            .pick_tex
-            .as_ref()
-            .filter(|_| self.pick_hot && self.run_dir.is_none())
-            .map(|(_, t)| t);
         let tex = if self.run_dir.is_some() && self.tex.is_some() {
             self.tex.as_ref()
         } else {
-            shown_pick.or(self.first_tex.as_ref())
+            self.first_tex.as_ref()
         };
         if let Some(t) = tex {
             painter.image(
@@ -2009,6 +2448,19 @@ fn click_events(
 }
 
 impl App {
+    /// Where frame `f` is on the range bar on the screen.
+    fn bar_x(&self, f: f64) -> egui::Pos2 {
+        let r = self.btn_bar.expect("the range bar is on the screen");
+        let n = self.source.as_ref().and_then(|s| s.count).unwrap_or(2);
+        r.min + egui::vec2(r.width() * (f / (n - 1) as f64) as f32, 0.0)
+    }
+
+    /// Both thumbnails show the frames `a` and `b`.
+    fn thumb_ready(&self, a: i64, b: i64) -> bool {
+        let has = |t: &Thumb, n: i64| t.tex.as_ref().is_some_and(|x| x.0 == n);
+        has(&self.thumb_start, a) && has(&self.thumb_end, b)
+    }
+
     fn screenshot(ctx: &egui::Context, out: &Path, name: &str) {
         let path = out.join(format!("{name}.png"));
         ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
@@ -2051,6 +2503,225 @@ impl App {
             );
         };
         match s.stage {
+            0 if s.v041 => {
+                self.base_out = s.out.join("optflow_出力");
+                self.out_picked = true;
+                let r = Source::open(&s.source).map(|src| (src, None));
+                self.set_source(ctx, r);
+                self.settings = optflow_app::settings::Settings::preset(
+                    optflow_app::settings::Preset::Recommended,
+                );
+                s.mark = Some(Instant::now());
+                s.wait = 10;
+                s.stage = 300;
+            }
+            300 => {
+                let n = self.source.as_ref().and_then(|x| x.count).expect("a count");
+                let (a, b) = (0, n as i64 - 1);
+                if self.thumb_ready(a, b) {
+                    log(
+                        self,
+                        &format!(
+                            "both thumbnails are there after {:.2} s",
+                            s.mark.unwrap().elapsed().as_secs_f64()
+                        ),
+                    );
+                    Self::screenshot(ctx, &s.out, "v01_opened_thumbnails");
+                    let first = self.first.clone().expect("a source is open");
+                    let (w, h) = (first.w as f64, first.h as f64);
+                    s.events.extend(drag_events(
+                        at(self, 0.25 * w, 0.25 * h),
+                        at(self, 0.75 * w, 0.75 * h),
+                        primary,
+                    ));
+                    s.stage = 301;
+                    s.wait = 6;
+                }
+            }
+            301 => {
+                assert_eq!(self.roi.len(), 4, "the drag made a rectangle");
+                // the start handle to 30 % of the bar
+                let n = self.source.as_ref().and_then(|x| x.count).unwrap();
+                let (from, to) = (self.bar_x(0.0), self.bar_x(0.3 * (n - 1) as f64));
+                s.events.extend(drag_events(from, to, primary));
+                s.mark = None;
+                s.stage = 302;
+                s.wait = 12;
+            }
+            302 => {
+                let n = self.source.as_ref().and_then(|x| x.count).unwrap() as i64;
+                s.mark.get_or_insert_with(Instant::now);
+                let want = (0.3 * (n - 1) as f64).round() as i64;
+                assert!(
+                    (self.start - want).abs() <= (n / 100).max(1),
+                    "start {} want {want}",
+                    self.start
+                );
+                assert_eq!(self.stop, 0, "the end was not touched");
+                if s.thumb_at.is_none() && self.thumb_ready(self.start, n - 1) {
+                    let t = s.mark.unwrap().elapsed().as_secs_f64();
+                    s.thumb_at = Some(t);
+                    eprintln!("script: thumbnails of the start handle's frame {} there {t:.2} s after the release", self.start);
+                }
+                if self.thumb_ready(self.start, n - 1) && self.first_start == self.start {
+                    log(
+                        self,
+                        &format!(
+                            "start handle on {}; thumbnail and canvas there {:.2} s after the release",
+                            self.start,
+                            s.mark.unwrap().elapsed().as_secs_f64()
+                        ),
+                    );
+                    Self::screenshot(ctx, &s.out, "v02_start_dragged");
+                    // the end handle to 70 %
+                    let (from, to) = (self.bar_x((n - 1) as f64), self.bar_x(0.7 * (n - 1) as f64));
+                    s.events.extend(drag_events(from, to, primary));
+                    s.mark = None;
+                    s.stage = 303;
+                    s.wait = 12;
+                }
+            }
+            303 => {
+                let n = self.source.as_ref().and_then(|x| x.count).unwrap() as i64;
+                s.mark.get_or_insert_with(Instant::now);
+                let want = (0.7 * (n - 1) as f64).round() as i64;
+                assert!(
+                    (self.stop - 1 - want).abs() <= (n / 100).max(1),
+                    "stop {} want {want}",
+                    self.stop
+                );
+                if self.thumb_ready(self.start, self.stop - 1) {
+                    log(
+                        self,
+                        &format!(
+                            "end handle on {}; thumbnail there {:.2} s after the release",
+                            self.stop - 1,
+                            s.mark.unwrap().elapsed().as_secs_f64()
+                        ),
+                    );
+                    eprintln!(
+                        "script: {}",
+                        range::text(Some(n as usize), self.start, self.stop, self.step, self.fps)
+                    );
+                    Self::screenshot(ctx, &s.out, "v03_end_dragged");
+                    // a click on the track nearer the start: the start handle goes there
+                    let f = 0.4 * (n - 1) as f64;
+                    s.events.extend(click_events(self.bar_x(f), primary, 1));
+                    s.stage = 304;
+                    s.wait = 6;
+                }
+            }
+            304 => {
+                let n = self.source.as_ref().and_then(|x| x.count).unwrap() as i64;
+                let want = (0.4 * (n - 1) as f64).round() as i64;
+                assert!(
+                    (self.start - want).abs() <= (n / 100).max(1),
+                    "click: start {} want {want}",
+                    self.start
+                );
+                // the start handle dragged far past the end: it stops one step before it
+                let (from, to) = (self.bar_x(self.start as f64), self.bar_x((n - 1) as f64));
+                s.events.extend(drag_events(from, to, primary));
+                s.stage = 305;
+                s.wait = 12;
+            }
+            305 => {
+                assert_eq!(self.start, self.stop - 1 - self.step.max(1), "no crossing");
+                eprintln!(
+                    "script: {}",
+                    range::text(
+                        self.source.as_ref().and_then(|x| x.count),
+                        self.start,
+                        self.stop,
+                        self.step,
+                        self.fps
+                    )
+                );
+                s.wait = 20;
+                s.stage = 306;
+            }
+            306 => {
+                let n = self.source.as_ref().and_then(|x| x.count).unwrap() as i64;
+                if self.thumb_ready(self.start, self.stop - 1) {
+                    Self::screenshot(ctx, &s.out, "v04_handles_close");
+                    // a number field beyond the source: the bar is drawn clamped, the setting stays
+                    self.stop = n + 40;
+                    s.wait = 8;
+                    s.stage = 307;
+                }
+            }
+            307 => {
+                assert!(self.stop > 0);
+                Self::screenshot(ctx, &s.out, "v05_stop_beyond_source");
+                s.wait = 8;
+                s.stage = if s.vid { 308 } else { 999 };
+            }
+            308 => {
+                // all frames from the first; the picture follows the start
+                (self.start, self.stop) = (0, 0);
+                s.wait = 20;
+                s.stage = 309;
+            }
+            309 => {
+                if self.first_start == 0 {
+                    let b = self.btn_start.expect("the start button is on the screen");
+                    s.events.extend(click_events(b.center(), primary, 1));
+                    s.mark = Some(Instant::now());
+                    s.stage = 310;
+                    s.wait = 6;
+                }
+            }
+            310 => {
+                if self.running.is_none()
+                    && !self.series.is_empty()
+                    && self.tex.is_some()
+                    && !self.view_busy()
+                {
+                    eprintln!(
+                        "script: run of {} results done in {:.1} s; error {:?}",
+                        self.series.len(),
+                        s.mark.unwrap().elapsed().as_secs_f64(),
+                        self.error
+                    );
+                    Self::screenshot(ctx, &s.out, "v06_run_done");
+                    s.wait = 8;
+                    s.stage = 311;
+                }
+            }
+            311 => {
+                let b = self.btn_video.expect("the video button is on the screen");
+                eprintln!("script: video button at {:?}", b.center());
+                self.start_video_export(ctx, s.out.join("run_gmax.mp4"));
+                s.mark = Some(Instant::now());
+                s.stage = 312;
+                s.wait = 4;
+            }
+            312 => {
+                if self.video_job.is_none() {
+                    let p = s.out.join("run_gmax.mp4");
+                    eprintln!(
+                        "script: video export took {:.1} s; {} bytes; notice {:?}",
+                        s.mark.unwrap().elapsed().as_secs_f64(),
+                        std::fs::metadata(&p).map_or(0, |m| m.len()),
+                        self.notice
+                    );
+                    let n = self.series.len();
+                    for (name, k) in [
+                        ("still_first", 0),
+                        ("still_mid", n / 2),
+                        ("still_last", n - 1),
+                    ] {
+                        let _ = optflow_cli::video::tool_command("ffmpeg")
+                            .args(["-v", "error", "-y", "-i"])
+                            .arg(&p)
+                            .args(["-vf", &format!("select=eq(n\\,{k})"), "-frames:v", "1"])
+                            .arg(s.out.join(format!("{name}.png")))
+                            .status();
+                    }
+                    s.wait = 5;
+                    s.stage = 999;
+                }
+            }
             0 if s.v040 => {
                 self.base_out = s.out.join("optflow_出力");
                 self.out_picked = true;
@@ -2076,42 +2747,9 @@ impl App {
             }
             201 => {
                 assert_eq!(self.roi.len(), 4, "the drag made a rectangle");
-                // a click at four fifths of the slider rail, as a user's
-                let r = self.btn_pick.expect("the frame slider is on the screen");
-                let p = egui::pos2(r.min.x + 0.8 * 200.0, r.center().y);
-                s.events.extend(click_events(p, primary, 1));
-                s.stage = 202;
-                s.wait = 4;
-            }
-            202 => {
-                let ready = self.pick_tex.as_ref().is_some_and(|t| t.0 == self.pick);
-                if self.pick > 0 && self.pick_hot && ready {
-                    log(self, &format!("the slider is on frame {}", self.pick));
-                    assert_eq!(self.start, 0, "the start did not move");
-                    Self::screenshot(ctx, &s.out, "v02_slider_later_frame");
-                    s.wait = 8;
-                    s.stage = 203;
-                }
-            }
-            203 => {
-                let b = self.btn_pick_end.expect("the end button is on the screen");
-                s.events.extend(click_events(b.center(), primary, 1));
                 s.stage = 204;
-                s.wait = 6;
             }
             204 => {
-                assert_eq!(self.stop, self.pick + 1, "the frame became the last one");
-                eprintln!(
-                    "script: {}",
-                    range::text(
-                        self.source.as_ref().and_then(|x| x.count),
-                        self.start,
-                        self.stop,
-                        self.step,
-                        self.fps
-                    )
-                );
-                Self::screenshot(ctx, &s.out, "v03_end_set");
                 let b = self.btn_filter.expect("the filter choice is on the screen");
                 s.events.extend(click_events(b.center(), primary, 1));
                 s.stage = 205;
@@ -2578,6 +3216,7 @@ impl eframe::App for App {
             self.gpu = g;
             self.gpu_rx = None;
         }
+        self.poll_video(ctx);
         if let Some(rx) = &self.export_rx {
             if let Ok(r) = rx.try_recv() {
                 self.notice = Some(match r {
@@ -2612,8 +3251,8 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         egui::Panel::left("controls")
-            .default_size(350.0)
-            .size_range(300.0..=420.0)
+            .default_size(500.0)
+            .size_range(300.0..=700.0)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.controls(ui, &ctx));
             });
@@ -2688,6 +3327,8 @@ fn main() -> eframe::Result<()> {
                 gpu: rest.iter().any(|a| a == "gpu"),
                 reopen: rest.iter().any(|a| a == "reopen"),
                 v040: rest.iter().any(|a| a == "v040"),
+                v041: rest.iter().any(|a| a == "v041" || a == "v041vid"),
+                vid: rest.iter().any(|a| a == "v041vid"),
                 ..Script::default()
             })
         }
