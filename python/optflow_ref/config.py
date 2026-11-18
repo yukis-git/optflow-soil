@@ -77,7 +77,8 @@ class Config:
     fb_min_support: int = 20
     fb_tol: float = 0.5
     # temporal averaging front-end of `seq` (report section "temporal averaging"): each sampled frame is the mean of
-    # the 2 tavg + 1 frames around it (clipped to the video); tavg_align first aligns every neighbour to the centre frame
+    # the 2 tavg + 1 frames around it (clipped to the video; where it is one-sided because the video ends, the neighbours are motion
+    # compensated, dense model); tavg_align first aligns every neighbour to the centre frame
     # with an affine motion fitted to the coarse POC flow. tavg = 0: off, frames untouched.
     tavg: int = 0
     tavg_align: bool = False

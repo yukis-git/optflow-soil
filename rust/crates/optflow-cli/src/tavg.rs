@@ -1,6 +1,7 @@
 //! Temporal averaging front-end of `seq` (`python/optflow_ref/tavg.py` and `_iter_averaged` of
 //! `io.py`): each sampled frame is the mean of the `2 m + 1` frames around it (clipped to the
-//! video, the window may reach past `stop`), taken after the integer downscale. With `align`, every
+//! video, the window may reach past `stop`), taken after the integer downscale. Where the window is
+//! one-sided because the input ends, the neighbours are motion compensated (`with_edge_align`). With `align`, every
 //! neighbour is first aligned to the centre frame with a motion estimated from the coarse POC flow
 //! (`tavg_model`: one robust affine fit inside the ROI, or the dense coarse flow); a neighbour whose
 //! motion cannot be estimated is left out of the mean.
@@ -166,6 +167,17 @@ pub fn average_window(
     centre: usize,
     align: Option<(&Config, Option<&Image<bool>>)>,
 ) -> Image<f32> {
+    average_window_with(frames, centre, align, false)
+}
+
+/// [`average_window`]; with `keep_unaligned` a neighbour whose motion cannot be estimated enters
+/// the mean as it is instead of being left out.
+fn average_window_with(
+    frames: &[&Image<f32>],
+    centre: usize,
+    align: Option<(&Config, Option<&Image<bool>>)>,
+    keep_unaligned: bool,
+) -> Image<f32> {
     let c = frames[centre];
     let mut used: Vec<Image<f32>> = Vec::new();
     for (i, f) in frames.iter().enumerate() {
@@ -173,11 +185,11 @@ pub fn average_window(
             continue;
         }
         match align {
-            Some((cfg, mask)) => {
-                if let Some(a) = align_to(c, f, cfg, mask) {
-                    used.push(a);
-                }
-            }
+            Some((cfg, mask)) => match align_to(c, f, cfg, mask) {
+                Some(a) => used.push(a),
+                None if keep_unaligned => used.push((*f).clone()),
+                None => {}
+            },
             None => used.push((*f).clone()),
         }
     }
@@ -206,6 +218,9 @@ pub struct Averaged {
     step: usize,
     stop: Option<i64>,
     align: Option<Config>,
+    /// Motion compensation of the one-sided windows at the ends of the input (see
+    /// [`Averaged::with_edge_align`]).
+    edge_align: Option<Config>,
     mask: MaskFn,
     buf: BTreeMap<usize, Image<f32>>,
     /// Index of the next frame to read.
@@ -233,6 +248,7 @@ impl Averaged {
             step,
             stop,
             align,
+            edge_align: None,
             mask,
             buf: BTreeMap::new(),
             read: start.saturating_sub(m),
@@ -240,6 +256,18 @@ impl Averaged {
             nxt: start,
             ended: false,
         }
+    }
+
+    /// Aligns the neighbours to the sampled frame (dense coarse-flow model of `cfg`) in the windows
+    /// that are one-sided because the input ends (`s < m` or fewer than `m` frames after `s`), so
+    /// that their time centre does not lag; the number of frames averaged is unchanged. A
+    /// neighbour whose alignment fails enters unaligned. Symmetric windows, and every window when
+    /// `align` (`tavg_align`) is set, are not affected.
+    pub fn with_edge_align(mut self, cfg: Config) -> Averaged {
+        let mut cfg = cfg;
+        cfg.tavg_model = "dense".to_string();
+        self.edge_align = Some(cfg);
+        self
     }
 
     /// Whether the window of sampled frame `nxt` is complete when frame `ready` is the last one
@@ -258,12 +286,24 @@ impl Averaged {
         let out = if frames.len() == 1 {
             frames[0].clone()
         } else {
+            let one_sided = s - lo != hi - s;
+            // an image smaller than the POC window has no grid to estimate the motion on
+            let edge = one_sided
+                && self.align.is_none()
+                && self
+                    .edge_align
+                    .as_ref()
+                    .is_some_and(|c| frames[0].w.min(frames[0].h) >= c.poc_win);
             let mask = match &self.align {
                 Some(_) => (self.mask)(frames[0].w, frames[0].h)?,
                 None => None,
             };
-            let align = self.align.as_ref().map(|c| (c, mask.as_ref()));
-            average_window(&frames, s - lo, align)
+            let align = match (&self.align, &self.edge_align) {
+                (Some(c), _) => Some((c, mask.as_ref())),
+                (None, Some(c)) if edge => Some((c, None)),
+                _ => None,
+            };
+            average_window_with(&frames, s - lo, align, edge)
         };
         self.nxt += self.step;
         let keep_from = self.nxt.saturating_sub(self.m);
@@ -375,6 +415,117 @@ mod tests {
             (im.data.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / 256.0).sqrt()
         };
         assert!(rms(&mean) < rms(&frames[4]) / 2.0);
+    }
+
+    /// A textured (blurred noise) image, and the same moved by `d` pixels in x.
+    fn texture(n: usize) -> Image<f32> {
+        let mut s = 11u64;
+        let mut v: Vec<f32> = (0..n * n)
+            .map(|_| {
+                s = s
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                (s >> 40) as f32 / (1u64 << 24) as f32
+            })
+            .collect();
+        for _ in 0..3 {
+            let src = v.clone();
+            for y in 1..n - 1 {
+                for x in 1..n - 1 {
+                    v[y * n + x] = (src[y * n + x] * 4.0
+                        + src[y * n + x - 1]
+                        + src[y * n + x + 1]
+                        + src[(y - 1) * n + x]
+                        + src[(y + 1) * n + x])
+                        / 8.0;
+                }
+            }
+        }
+        Image::from_vec(n, n, v)
+    }
+
+    fn moved(base: &Image<f32>, d: f32) -> Image<f32> {
+        let (ux, uy) = (
+            Image::from_vec(base.w, base.h, vec![d; base.w * base.h]),
+            Image::<f32>::new(base.w, base.h),
+        );
+        warp(base, &ux, &uy)
+    }
+
+    fn moving(n: usize, count: usize, v: f32) -> Vec<Image<f32>> {
+        let base = texture(n);
+        (0..count).map(|i| moved(&base, v * i as f32)).collect()
+    }
+
+    fn averaged_frames(
+        frames: Vec<Image<f32>>,
+        m: usize,
+        edge: bool,
+        align: Option<Config>,
+    ) -> Vec<Image<f32>> {
+        let it: Box<dyn Iterator<Item = Result<Image<f32>>>> = Box::new(frames.into_iter().map(Ok));
+        let a = Averaged::new(it, 0, None, 1, m, align, none_mask());
+        let a = if edge {
+            a.with_edge_align(Config {
+                max_disp: 8.0,
+                ..Config::default()
+            })
+        } else {
+            a
+        };
+        a.map(|f| f.unwrap()).collect()
+    }
+
+    fn rms_inside(a: &Image<f32>, b: &Image<f32>) -> f64 {
+        let (mut s, mut c) = (0.0, 0.0);
+        for y in 20..a.h - 20 {
+            for x in 20..a.w - 20 {
+                s += f64::from(a.data[y * a.w + x] - b.data[y * a.w + x]).powi(2);
+                c += 1.0;
+            }
+        }
+        (s / c).sqrt()
+    }
+
+    #[test]
+    fn one_sided_windows_at_the_ends_are_aligned_and_inner_ones_are_plain() {
+        // linear motion of 0.6 px per frame: before v0.4.2 the mean at frame 0 sat at time 1.5
+        let (n, m) = (128, 3);
+        let fr = moving(n, 12, 0.6);
+        let plain = averaged_frames(fr.clone(), m, false, None);
+        let edge = averaged_frames(fr.clone(), m, true, None);
+        assert_eq!(plain.len(), 12);
+        for s in [0, 1, 2, 9, 10, 11] {
+            let (p, e) = (rms_inside(&plain[s], &fr[s]), rms_inside(&edge[s], &fr[s]));
+            assert!(p > 0.004, "frame {s}: the plain window must lag, {p}");
+            assert!(e < 0.2 * p, "frame {s}: aligned {e} vs plain {p}");
+        }
+        // symmetric windows are exactly the plain mean
+        for s in m..12 - m {
+            assert_eq!(plain[s].data, edge[s].data, "frame {s}");
+        }
+        // with tavg_align the user's choice stays: every window is aligned, with or without the edge rule
+        let cfg = Config {
+            max_disp: 8.0,
+            ..Config::default()
+        };
+        let a1 = averaged_frames(fr.clone(), m, false, Some(cfg.clone()));
+        let a2 = averaged_frames(fr.clone(), m, true, Some(cfg));
+        for s in 0..12 {
+            assert_eq!(a1[s].data, a2[s].data, "frame {s}");
+        }
+        assert_ne!(a1[5].data, plain[5].data);
+    }
+
+    #[test]
+    fn a_frame_smaller_than_the_poc_window_is_averaged_unaligned_at_the_ends() {
+        // 16 x 16 frames (poc_win 64): no motion estimation, no panic, the plain mean
+        let fr = moving(16, 8, 0.3);
+        let plain = averaged_frames(fr.clone(), 2, false, None);
+        let edge = averaged_frames(fr.clone(), 2, true, None);
+        for s in 0..8 {
+            assert_eq!(plain[s].data, edge[s].data, "frame {s}");
+        }
     }
 
     #[test]

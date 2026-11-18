@@ -512,7 +512,7 @@ fn frames(
         Some(path) => Ok(Some(mask::load_mask(path, w, h)?)),
         None => roi_mask(roi_file.as_deref(), w, h, scale),
     });
-    Ok(Box::new(tavg::Averaged::new(
+    let averaged = tavg::Averaged::new(
         raw,
         usize::try_from(start).unwrap_or(0),
         stop,
@@ -520,7 +520,8 @@ fn frames(
         usize::try_from(m).unwrap_or(0),
         cfg.tavg_align.then(|| cfg.clone()),
         mask,
-    )))
+    );
+    Ok(Box::new(averaged.with_edge_align(cfg.clone())))
 }
 
 /// Hands the frames that decode to the tracker, cut to the crop; the first failure ends the stream

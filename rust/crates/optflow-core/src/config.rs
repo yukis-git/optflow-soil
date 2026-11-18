@@ -531,7 +531,8 @@ pub struct Config {
     /// Hybrid: agreement tolerance [px] of the gate and of the re-acquisition.
     pub fb_tol: f64,
     /// Temporal averaging front-end of `seq`: each sampled frame is the mean of the `2 tavg + 1`
-    /// frames around it (0: off).
+    /// frames around it (0: off). Where the input ends the window is one-sided; its neighbours are
+    /// then motion compensated (dense model) so that the averaged frame does not lag.
     pub tavg: i64,
     /// Align the neighbours to the centre frame before averaging.
     pub tavg_align: bool,

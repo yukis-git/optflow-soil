@@ -140,9 +140,10 @@ mod tests {
         let out = std::env::temp_dir().join(format!("optflow-app-smoke-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&out);
         let report = run_smoke(&out).unwrap();
-        // the picture of frame i is cut at (i, i / 2), so content moves by (-i, -(i / 2)); the
-        // recommended settings average 3 frames each side (clamped at the ends), which puts the
-        // last result at -2, -1 px: frames 2..5 against 0..3
+        // the picture of frame i is cut at (i, i / 2), so content moves by (-i, -(i / 2)): the last
+        // result (frame 5) is at -5, -2 px. The recommended settings average 3 frames each side;
+        // the windows at the ends of the sequence are one-sided and motion compensated since
+        // v0.4.2, so they do not lag (before, this was -2, -1 px: frames 2..5 against 0..3)
         let last = report.lines().last().unwrap();
         let get = |key: &str| -> f64 {
             last.split_whitespace()
@@ -153,8 +154,8 @@ mod tests {
         };
         assert!(get("valid=") > 0.5, "{last}");
         assert!(get("g99=").is_finite(), "{last}");
-        assert!((get("ux_med=") + 2.0).abs() < 0.3, "{last}");
-        assert!((get("uy_med=") + 1.0).abs() < 0.3, "{last}");
+        assert!((get("ux_med=") + 5.0).abs() < 0.3, "{last}");
+        assert!((get("uy_med=") + 2.0).abs() < 0.3, "{last}");
         let _ = std::fs::remove_dir_all(&out);
     }
 }

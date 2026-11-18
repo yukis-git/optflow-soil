@@ -1,10 +1,13 @@
 """Image, video, ROI and result I/O. All images become float64 grey levels in [0, 1]."""
+import dataclasses
 import glob
 import json
 import os
 
 import numpy as np
 from PIL import Image, ImageDraw
+
+from .config import Config
 
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
 
@@ -99,7 +102,10 @@ def iter_frames(source: str, start=0, stop=None, step=1, scale=1, tavg=0, align=
     start, start + step, ... < stop (step >= 1, start >= 0, checked on the first next()).
 
     tavg = m > 0: each of these frames is the mean of the frames i - m .. i + m (clipped to the video; the window may
-    reach past `stop`), taken after the integer downscale. align: the neighbours are first aligned to frame i with an
+    reach past `stop`), taken after the integer downscale. A window that is one-sided because the video ends (i < m or
+    fewer than m frames after i) has the same number of frames but its neighbours are first aligned to frame i (dense
+    model, as tavg_model="dense"; a failure leaves the frame unaligned), so its time centre does not lag; with align
+    every window is aligned as before. align: the neighbours are first aligned to frame i with an
     affine motion from the coarse POC flow (tavg.align_to; cfg gives its parameters, default Config(); mask_fn(shape)
     returns the ROI mask of a downscaled frame, to which the motion fit is restricted). tavg = 0 returns the frames
     untouched."""
@@ -120,11 +126,15 @@ def iter_frames(source: str, start=0, stop=None, step=1, scale=1, tavg=0, align=
 def _iter_averaged(source, start, stop, step, scale, m, align, cfg, mask_fn):
     from .tavg import average_window
     buf = {}  # frame index -> downscaled frame, only the indices a pending window still needs
+    edge_cfg = dataclasses.replace(cfg or Config(), tavg_model="dense")
     nxt, last = start, -1  # next sampled index, last frame index read
 
     def emit(s):
         lo, hi = max(0, s - m), min(s + m, last)
         fr = [buf[i] for i in range(lo, hi + 1)]
+        if not align and s - lo != hi - s and min(fr[0].shape) >= edge_cfg.poc_win:  # smaller: no POC grid
+            # one-sided because the input ends: motion compensate (dense model), a failure keeps the frame unaligned
+            return average_window(fr, s - lo, True, edge_cfg, None, keep_unaligned=True)
         return average_window(fr, s - lo, align, cfg, mask_fn(fr[0].shape) if align and mask_fn else None)
 
     def due(i_ready):

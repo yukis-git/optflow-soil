@@ -65,6 +65,7 @@ optflow seq --frames clip.mp4 --roi roi.json --scale 2 --step 5 \
     --set seq_mode=hybrid --set tavg=3 --set prewarp_freeze_at=3 --out out/
 ```
 - 推奨は `seq_mode=hybrid`、`tavg=3`、`prewarp_freeze_at=3`。**CLI の既定値は従来どおり `seq_mode=chain`** のままです(上のオプションを付けたときだけ変わります)。デスクトップアプリの「推奨」プリセットはこの組に `ref_update_conf=0.3` を加えたものです。
+- `tavg` は各フレームを前後 `tavg` 枚との平均にします。動画の先頭・末尾で窓が片側だけになるとき、v0.4.1 までは平均が時間的に片寄り、動いている動画で変位が遅れて出ました。v0.4.2 からは同じ枚数のまま隣のフレームを位置合わせしてから平均します(先頭か末尾が動いている動画だけ結果が変わります)。
 - `ref_update_conf`(参照フレームを更新する信頼度のしきい値)は**データ依存**です。2 本のテスト動画で 1 つの値が両方に合うことはなく、0.3 と 0.5 を使い分けました。自動で決める方式は採用していません。
   参照の切り替え回数と、静止領域のひずみのノイズを見て決めてください。
 - 評価は誤差だけでなく**有効画素の割合の時間変化**も合わせて見てください(追跡できていない画素を除いた誤差は良く見えます)。
@@ -161,6 +162,7 @@ optflow seq --frames clip.mp4 --roi roi.json --scale 2 --step 5 \
 ```
 - Recommended: `seq_mode=hybrid`, `tavg=3`, `prewarp_freeze_at=3`. **The CLI defaults remain `seq_mode=chain`**; they change only when you pass these options.
   The app's "recommended" preset is this set plus `ref_update_conf=0.3`.
+- `tavg` averages every frame with `tavg` frames on either side. Where the window is one-sided at the start or end of a video, up to v0.4.1 the average was off-centre in time and displacements lagged on a moving video; since v0.4.2 the same number of frames is averaged after aligning the neighbours (only videos that are moving at their start or end change).
 - `ref_update_conf` (the confidence threshold for moving the reference frame) is **data dependent**. No single value suited both
   test videos (0.3 and 0.5 were used), and an automatic choice was tried but not adopted. Check the number of reference switches and the
   strain noise in a static region.

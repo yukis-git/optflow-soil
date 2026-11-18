@@ -56,9 +56,10 @@ def align_to(centre, other, cfg=None, mask=None):
     return map_coordinates(other, [yy + uy, xx + ux], order=3, mode="nearest")
 
 
-def average_window(frames, centre, align=False, cfg=None, mask=None):
+def average_window(frames, centre, align=False, cfg=None, mask=None, keep_unaligned=False):
     """Mean of `frames` (a list, the window around the centre frame frames[centre]). align: every other frame is first
-    aligned to the centre (align_to); a frame whose motion cannot be estimated is left out of the mean."""
+    aligned to the centre (align_to); a frame whose motion cannot be estimated is left out of the mean, or with
+    keep_unaligned enters it unaligned."""
     use = [frames[centre]]
     for i, f in enumerate(frames):
         if i == centre:
@@ -66,6 +67,8 @@ def average_window(frames, centre, align=False, cfg=None, mask=None):
         if align:
             f = align_to(frames[centre], f, cfg, mask)
             if f is None:
-                continue
+                if not keep_unaligned:
+                    continue
+                f = frames[i]
         use.append(f)
     return np.mean(use, axis=0) if len(use) > 1 else frames[centre]

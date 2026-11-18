@@ -140,3 +140,26 @@ def test_cli_seq_tavg_off_is_bit_identical_and_on_changes_frames(tmp_path):
         outs[tag] = np.load(o / "frame_00001" / "raw_ux.npy")
     assert np.array_equal(outs["default"], outs["off"])
     assert not np.array_equal(outs["default"], outs["on"])
+
+
+def test_one_sided_windows_at_the_ends_are_motion_compensated_and_inner_ones_are_plain(tmp_path):
+    n = 12
+    fr = _moving_frames(n, [(0.6 * i, 0.3 * i) for i in range(n)])  # linear motion, 0.6 / 0.3 px per frame
+    for i, f in enumerate(fr):
+        Image.fromarray(np.round(np.clip(f, 0, 1) * 65535).astype(np.uint16)).save(tmp_path / f"f{i:03d}.png")
+    cfg = Config(max_disp=8.0)
+    m = (slice(20, -20), slice(20, -20))
+    rms = lambda a, b: np.sqrt(np.mean((a[m] - b[m]) ** 2))
+    out = list(iter_frames(str(tmp_path), 0, None, 1, 1, tavg=3, cfg=cfg))
+    assert len(out) == n
+    q = lambda f: np.round(np.clip(f, 0, 1) * 65535) / 65535  # the frames as they were read back
+    for s in (0, n - 1):  # first and last frame: the same 4 frames as before, no lag
+        lo, hi = max(0, s - 3), min(n - 1, s + 3)
+        plain = np.mean([q(fr[i]) for i in range(lo, hi + 1)], axis=0)
+        assert rms(out[s], q(fr[s])) < 0.1 * rms(plain, q(fr[s])) and rms(plain, q(fr[s])) > 0.01
+    for s in range(3, n - 3):  # symmetric windows: exactly the plain mean
+        plain = np.mean([q(fr[i]) for i in range(s - 3, s + 4)], axis=0)
+        assert np.abs(out[s] - plain).max() < 1e-9
+    # with tavg_align the user's choice is unchanged: every window is aligned (model affine), also the inner ones
+    al = list(iter_frames(str(tmp_path), 0, None, 1, 1, tavg=3, align=True, cfg=cfg))
+    assert not np.array_equal(al[5], out[5])
